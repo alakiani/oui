@@ -94,7 +94,8 @@ test("a goal runs in dependency order and reaches the chef only for what is thei
   assert.equal(question.viaSous, true);
   assert.match(question.title, /per API key, per IP, or key with IP fallback/);
   assert.equal(question.holds, 4, "the question holds up its own ticket and the three behind it");
-  assert.equal(state(limits), "needs_you");
+  // The sous chef can pass the question up a moment before the cook has ended its turn.
+  await until("the cook to stop and wait", () => state(limits) === "needs_you");
   await until("the independent ticket to finish meanwhile", () => state(limiter) === "done");
   assert.equal(state(wire), "waiting");
 

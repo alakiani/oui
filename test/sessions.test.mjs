@@ -66,8 +66,8 @@ test("with Herdr, each cook is a terminal in its goal's space, and answers are t
   assert.deepEqual(kitchen.state.tasks[limits].terminal.handle, "oui-t2");
   assert.deepEqual(board().tasks.find((t) => t.id === limits).terminal, { backend: "herdr", handle: "oui-t2" });
 
-  // The cook stopped to wait. Its terminal is still there; the answer is typed into it.
-  assert.equal(state(limits), "needs_you");
+  // The cook stops to wait, a moment after its question is on the board. Its terminal is still there; the answer is typed into it.
+  await until("the cook to stop and wait", () => state(limits) === "needs_you");
   kitchen.askAnswer({ id: question.id, text: "Per key, falling back to IP" }, chef);
   await until("the answer to be typed in", () => calls().some((c) => c.startsWith("send oui-t2 ") && c.includes("Per key, falling back to IP")));
   assert.equal(calls().filter((c) => c.startsWith("run ") && c.includes("--name oui-t2 ")).length, 1, "the same terminal is reused, not restarted");
@@ -91,6 +91,9 @@ test("a terminal someone closes is noticed, and the cook comes back in a new one
   const g = kitchen.plan(PLAN[1], chef);
   const [, ci] = g.tasks.map((t) => t.id);
   const need = await until("the access request", () => askFor(ci, "access"));
+  // The ask is on the board a moment before the cook ends its turn. Close the terminal of a cook
+  // that has stopped to wait, which is what this test is about, not one still in the middle of asking.
+  await until("the cook to stop and wait", () => state(ci) === "needs_you");
   const handle = kitchen.state.tasks[ci].terminal.handle;
   const session = kitchen.state.tasks[ci].session;
   spawnSync(path.join(dir, "bin", "hc"), ["kill", handle], { env: process.env });

@@ -2,6 +2,8 @@
 
 An orchestrator for coding agents, run like a kitchen. You give the order. A sous chef breaks it into tickets with an order of their own, cooks carry them out at their stations, and you are interrupted only for what is yours to decide. One board shows what is waiting on you, what is cooking and what comes next.
 
+See it at **[alakiani.github.io/oui](https://alakiani.github.io/oui/)**: the page has a small service you can click through.
+
 > **In a starred kitchen, the chef doesn't cook every dish. But every plate goes out under the chef's name.**
 >
 > Oui Chef works the same way: your agents do the cooking, and nothing that matters leaves the pass without you.
