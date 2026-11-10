@@ -106,6 +106,8 @@ Use the number `oui actions` shows for the landing. Without `--yes`, `oui undo` 
 
 To talk a goal through before any ticket exists, use `oui sous` instead of `oui go`. It opens a conversation with the sous chef, who reads the repository and then asks you what only you can settle, a round at a time: numbered questions, each with the answer it would give. Reply "yes to all", or "2: per IP, the rest yes". Say "cook it" whenever you have heard enough.
 
+The plan it then writes is held: the tickets are on the board, and no cook starts. The sous chef calls the plan back to you in a few lines, says where it is least sure, and changes it until you both agree. It starts when you say so, there or with *Cook it* on the pass.
+
 A question does not have to hold everything up. When only part of a plan depends on it, the sous chef can put it on the pass as a ticket of its own: the tickets that need your answer wait, and the rest start cooking.
 
 Somewhere between the two: hand the goal over, and look at the plan before it starts.
@@ -214,6 +216,7 @@ One inspector reads each finished ticket against its brief. To add another, with
 |---|---|
 | See what needs you | `oui status`, or the board |
 | Hand over a goal | `oui go "…"` |
+| Say go to a plan that is waiting for you | `oui cook G2`, or *Cook it* on the pass |
 | Watch one cook | `oui tail T3 -f` |
 | Step in and type to a cook | `oui takeover T3` |
 | Send a ticket back with guidance | `oui refire T3 --note "use the existing helper"` |

@@ -89,6 +89,8 @@ oui sous                                 # an interactive Claude Code session th
 
 By default the sous chef reads the repository first, then asks you in rounds: every question it can ask at that point, numbered, each with the answer it would give, so "yes to all" is a valid reply. Say "cook it" at any time and it decides the rest and tells you what it assumed. How much it asks, and how, is yours to change: see [Make it yours](#make-it-yours).
 
+The plan it then writes is laid down held: the tickets are on the board and no cook starts. The sous chef calls the plan back to you (the goal as it understood it, a line for each ticket, what it assumed and where it is least sure) and changes it where it lies until you both agree. It starts on your word, in the conversation or with *Cook it* on the pass. If you close the conversation first, the plan waits.
+
 Then decide, from the board or the terminal:
 
 ```bash
@@ -97,6 +99,7 @@ oui answer A3 "Per API key"              # or: oui answer A3   (shows the ask an
 oui approve A5 --note "window is open"   # let a held command through
 oui deny A5 --note "not before Monday"
 oui approve A5 --always                  # and never hold this exact command again
+oui cook G2                              # say go to a plan that was waiting for you
 ```
 
 And look closer when you want to:
@@ -140,6 +143,8 @@ EOF
 ```
 
 `kind` is `build` (changes code), `ops` (acts on clusters, pipelines, deploys), `scout` (investigates and reports), `decide` (a question for you, with `options` and the plan's `pick`) or `land`. Here the limiter is built while the question is open, and only `wire` waits for your answer.
+
+`oui plan --hold` lays a plan down without starting it: the goal waits for your go, as it does with `--plan ask`. Planning the same goal again while it waits (`"goalId": "G1"` in place of a new goal) is the plan as it now stands: a ticket keeps its number by `key`, and one the new plan leaves out is dropped. `oui cook G1` starts it.
 
 ### Kitchen calls
 
@@ -220,7 +225,7 @@ Oui Chef does not prescribe a way of working. The mechanics are code: order, the
 
 | File | What it steers |
 |---|---|
-| `sous.md` | The sous chef you talk to in `oui sous`: what it asks before planning, how much, and when it stops asking |
+| `sous.md` | The sous chef you talk to in `oui sous`: what it asks before planning, how much, when it stops asking, and how it settles the plan with you before anything cooks |
 | `tickets.md` | How tickets are cut and briefed. The sous chef and the planner behind `oui go` both follow it |
 | `roles.md` | The planner, the triage of cooks' questions, what becomes of a cook's message, and the inspector, one section each |
 | `cook.md` | What every cook is told |
@@ -236,6 +241,7 @@ Some ways to run a kitchen:
 
 - **No questions.** In `sous.md`, have the sous chef decide everything itself and list what it assumed.
 - **A long talk before every goal.** Have it keep asking until you say to cook.
+- **Straight to the stove.** Have it plan without `--hold`, so cooks start as soon as the plan is in. Or the opposite: have it go through every plan ticket by ticket, one question at a time.
 - **House rules for tickets** in `tickets.md`: one ticket per pull request, a failing test first, a design note before any code.
 - **A stricter inspector.** Add your standards to the `review` section of `roles.md`.
 
@@ -308,13 +314,14 @@ Verified, with real runs:
 - **Questions as tickets, and your own prompts**, on macOS. Automated: a `decide` ticket reaches the pass while every cook is busy, holds only the tickets that need it, and its answer is in the brief of the cook behind it; your own prompt files win over the built-in ones, one file or one role at a time; the pass refuses an agent that touches them. With real Claude Code, once each on a scratch repository: the planner turned "add rate limiting" into two tickets that started at once, two questions on the pass, and one last ticket waiting for both answers; it turned a small, clear goal into a single ticket with no question; and the sous chef, given a one-sentence goal, read the repository, asked one numbered round of three questions with its own answer to each, and planned nothing.
 
 - **Seeing the plan first, tuned judgement calls, more than one inspector**, on macOS. Automated: a plan waits on the pass, goes back with your words and starts on your go; a sous chef who runs out of time or writes no plan asks instead of guessing; an inspector of your own reads the work separately and sends it back; the effort you set reaches the agent's command line. With real Claude Code, once: at `medium` effort with the plan check on, the planner planned "add rate limiting" in one minute, and its plan waited on the pass with a note on how it cut the work and what it assumed. The same goal had taken 6.8 minutes at the agent's default effort, on an earlier and longer version of the ticket rules, so the two are not a like-for-like comparison.
+- **A plan held until you agree.** Automated only: a plan laid down with `--hold` waits; planned again, it is changed where it lies and its tickets keep their numbers; the ask on the pass follows every change; `oui cook` starts it.
 - **Messages that are acted on.** Automated: a cook's message to the sous chef is passed on to the cook it concerns and closed, one written to the chef is handed up reworded, and one the sous chef ignores still reaches the pass. With real Claude Code, once: a cook reported that a limit is read only at start-up; in 11 seconds the sous chef told the rollout ticket to restart the pods and the docs ticket to say so, closed the message, and did not involve the chef.
 
 Not verified:
 
 - **Anything inside real Herdr.** Herdr and herdr-core could not be run where this was built. The `herdr` sessions backend uses only documented `hc` commands (`run`, `send`, `get`, `kill`, `rm`, `read`, `keys`, `interrupt`), and is tested against a stand-in. Whether a goal's cooks land in one space as named tabs exactly as intended is unconfirmed. The mod is written against Herdr's published guide and type file and tested with Herdr's modules replaced by stand-ins; how Herdr draws it is unconfirmed.
 - **Real clusters and forges.** `kubectl`, `helm` and `gh` were stand-ins. The checkpoint and undo commands are the documented ones; they have not been run against a live cluster.
-- **`landing: pr`** (push and `gh pr create`), **`oui sous`** and **`oui takeover`** (interactive sessions) were not exercised end to end. Of a conversation with the sous chef, only its first reply was seen.
+- **`landing: pr`** (push and `gh pr create`), **`oui sous`** and **`oui takeover`** (interactive sessions) were not exercised end to end. Of a conversation with the sous chef, only its first reply was seen: the sous chef calling a held plan back to you, and changing it until you agree, has not been run with a real agent.
 - **A real inspector of your own, and a real plan sent back.** Both run in the tests with scripted agents only.
 - **A real cook working from a decision.** The tests show the answer in the cook's brief; no real cook has built on one yet. The `decide` ticket on the web board and in the Herdr panel was not looked at.
 - **Other agent CLIs.** Cooks are Claude Code. `src/harness/` is the one place to add another.

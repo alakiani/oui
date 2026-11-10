@@ -218,8 +218,9 @@ export class Kitchen {
 
   // ---- goals and tickets
 
-  #newTask(goal, spec, by) {
-    const id = this.nextId("ticket", "T");
+  // `was` is a ticket of a waiting plan that the new plan keeps: same number, same place in line, everything else as the plan now says.
+  #newTask(goal, spec, by, was = null) {
+    const id = was?.id ?? this.nextId("ticket", "T");
     const kind = TICKET_KINDS.includes(spec.kind) ? spec.kind : "build";
     this.state.tasks[id] = {
       id,
@@ -241,67 +242,95 @@ export class Kitchen {
       errors: 0,
       turns: 0,
       cost: 0,
-      inbox: [],
+      inbox: was?.inbox ?? [], // what was said to it while the plan waited still reaches its cook
       by,
-      createdAt: now(),
+      createdAt: was?.createdAt ?? now(),
     };
     return this.state.tasks[id];
   }
 
   // Lay down a goal and its tickets in one go. `needs` may name keys in this plan or existing ticket ids.
+  //
+  // `hold` lays the plan down without starting it: every ticket waits for the chef's go (`cook`).
+  // A plan for a goal whose plan is already waiting is that plan as it now stands: a ticket keeps
+  // its number by key, a ticket the new plan leaves out is dropped, and the goal goes on waiting.
   plan(input, who) {
     const specs = input?.tickets ?? input?.tasks ?? [];
     if (!specs.length) throw new Fail("A plan needs at least one ticket");
-    let goal;
-    if (input.goalId) {
-      goal = this.goal(input.goalId);
-      if (input.goal?.title) goal.title = clip(input.goal.title, 120);
-    } else {
-      if (!input.goal?.title) throw new Fail("A plan needs goal.title");
-      const project = this.resolveProject(input.goal.project);
-      goal = { id: this.nextId("goal", "G"), title: clip(input.goal.title, 120), detail: String(input.goal.detail ?? "").trim(), project: project.id, status: "active", createdAt: now(), by: who.role };
-      this.state.goals[goal.id] = goal;
-    }
-    const keys = new Map();
+    const seen = new Set();
     for (const s of specs) {
       if (!s.title) throw new Fail("Every ticket needs a title");
-      if (s.key && keys.has(s.key)) throw new Fail(`Two tickets share the key ${s.key}`);
+      if (s.key && seen.has(s.key)) throw new Fail(`Two tickets share the key ${s.key}`);
+      if (s.key) seen.add(s.key);
     }
-    const before = { tasks: { ...this.state.tasks }, seq: { ...this.state.seq }, goals: { ...this.state.goals } };
+    const given = input.goalId ? this.goal(input.goalId) : null;
+    if (!given && !input.goal?.title) throw new Fail("A plan needs goal.title");
+    const waiting = given?.status === "proposed";
+    if (input.hold && given && !waiting && given.status !== "planning") throw new Fail(`${given.id} is ${given.status}: a plan can be held only before it starts. To stop it where it is: oui goal pause ${given.id}`);
+    // Goals and tickets that change are put back as they were if the plan does not hold together.
+    const before = { tasks: { ...this.state.tasks }, seq: { ...this.state.seq }, goals: { ...this.state.goals }, goal: given ? { ...given } : null };
     try {
+      let goal = given;
+      if (!goal) {
+        const project = this.resolveProject(input.goal.project);
+        goal = { id: this.nextId("goal", "G"), title: clip(input.goal.title, 120), detail: String(input.goal.detail ?? "").trim(), project: project.id, status: input.hold ? "proposed" : "active", createdAt: now(), by: who.role };
+        this.state.goals[goal.id] = goal;
+      } else {
+        if (input.goal?.title) goal.title = clip(input.goal.title, 120);
+        // What was settled while the plan waited belongs in the goal: no cook has read it yet.
+        if (waiting && String(input.goal?.detail ?? "").trim()) goal.detail = String(input.goal.detail).trim();
+      }
+      const old = waiting ? Object.values(this.state.tasks).filter((t) => t.goal === goal.id && ["todo", "paused"].includes(t.status)) : []; // nothing in a waiting plan has started
+      const keys = new Map();
       const made = specs.map((s) => {
-        const t = this.#newTask(goal, s, who.role === "cook" ? `cook:${who.task}` : who.role);
+        const t = this.#newTask(goal, s, who.role === "cook" ? `cook:${who.task}` : who.role, s.key ? old.find((o) => o.key === s.key) : null);
         if (s.key) keys.set(s.key, t.id);
         return [t, s];
       });
+      const dropped = old.filter((o) => !made.some(([t]) => t.id === o.id));
+      for (const o of dropped) this.state.tasks[o.id] = { ...o, status: "cancelled", finishedAt: now() };
       for (const [t, s] of made) {
         t.needs = [...new Set((s.needs ?? []).map((n) => keys.get(n) ?? n))];
+        const gone = t.needs.find((n) => dropped.some((o) => o.id === n));
+        if (gone) throw new Fail(`“${t.title}” needs ${gone}, which this plan leaves out. Keep that ticket in the plan, or name what is needed by its key.`);
       }
       const problem = graphProblem(Object.values(this.state.tasks));
       if (problem) throw new Fail(`This plan does not hold together: ${problem}`);
       if (input.goal?.note) goal.note = clip(input.goal.note, 1200); // for the chef: how the work was cut, and what was assumed
-      // A plan the chef has not seen (the sous chef wrote it alone) waits for their go, when they asked to see plans first.
-      const check = goal.status === "planning" && who.role === "sous" && (goal.planCheck ?? this.state.projects[goal.project]?.plan) === "ask";
-      if (goal.status === "planning") goal.status = check ? "proposed" : "active";
-      this.emit({ type: "plan", from: who.role === "chef" ? "chef" : "sous", to: "board", goal: goal.id, text: `Planned ${goal.id} “${goal.title}”: ${made.length} ticket${made.length === 1 ? "" : "s"}` });
-      if (check) goal.planAsk = this.#planAsk(goal, made.map(([t]) => t)).id;
+      // A plan the chef has not agreed to waits for their go: one the sous chef wrote alone, when they asked to see plans first, and one laid down held.
+      if (goal.status === "planning") goal.status = input.hold || (who.role === "sous" && (goal.planCheck ?? this.state.projects[goal.project]?.plan) === "ask") ? "proposed" : "active";
+      const held = goal.status === "proposed";
+      if (held && input.hold) goal.planCheck = "ask"; // and so does any plan that takes its place
+      this.emit({ type: "plan", from: who.role === "chef" ? "chef" : "sous", to: "board", goal: goal.id, text: `Planned ${goal.id} “${goal.title}”${waiting ? " again" : ""}: ${made.length} ticket${made.length === 1 ? "" : "s"}${held ? ", waiting for the chef's go" : ""}` });
+      if (held) this.putPlan(goal);
       this.changed();
-      return { goal: goal.id, tasks: made.map(([t]) => ({ id: t.id, key: t.key, title: t.title, needs: t.needs })) };
+      return { goal: goal.id, held, ask: held ? goal.planAsk : null, dropped: dropped.map((o) => o.id), tasks: made.map(([t]) => ({ id: t.id, key: t.key, title: t.title, needs: t.needs })) };
     } catch (e) {
-      Object.assign(this.state, { tasks: before.tasks, goals: input.goalId ? this.state.goals : before.goals });
-      this.state.seq = before.seq;
+      Object.assign(this.state, { tasks: before.tasks, goals: before.goals, seq: before.seq });
+      if (given) {
+        for (const k of Object.keys(given)) if (!(k in before.goal)) delete given[k];
+        Object.assign(given, before.goal);
+      }
       throw e;
     }
   }
 
   // The plan, put to the chef in one read: what there is to do, what waits on what, what was assumed.
-  #planAsk(goal, tickets) {
-    const lines = tickets.map((t) => {
-      const more = [t.kind === "decide" ? "a question for you" : t.kind === "build" ? "" : t.kind, t.needs.length ? `after ${t.needs.join(", ")}` : ""].filter(Boolean).join(", ");
-      return `${t.id}  ${t.title}${more ? `   (${more})` : ""}`;
-    });
+  // Called again whenever a waiting plan changes, so the ask on the pass always shows the plan as it stands.
+  putPlan(goal) {
+    const lines = Object.values(this.state.tasks)
+      .filter((t) => t.goal === goal.id && t.status !== "cancelled")
+      .map((t) => {
+        const more = [t.kind === "decide" ? "a question for you" : t.kind === "build" ? "" : t.kind, t.needs.length ? `after ${t.needs.join(", ")}` : ""].filter(Boolean).join(", ");
+        return `${t.id}  ${t.title}${more ? `   (${more})` : ""}`;
+      });
+    const title = `Cook ${goal.id} “${goal.title}” as planned?`;
     const body = [goal.note, lines.join("\n"), "Nothing starts until you say so. In your own words: what to change, and the sous chef plans again with that."].filter(Boolean).join("\n\n");
-    return this.askCreate({ kind: "plan", goal: goal.id, from: "sous", to: "chef", title: `Cook ${goal.id} “${goal.title}” as planned?`, body, options: ["Cook it", "Cancel the goal"], on: { "Cook it": ["goal.cook", goal.id], "Cancel the goal": ["goal.cancel", goal.id], "*": ["goal.replan", goal.id] } }, { role: "sous" });
+    const open = goal.planAsk ? this.state.asks[goal.planAsk] : null;
+    if (open?.status === "open" && open.kind === "plan") return Object.assign(open, { title: clip(title, 240), body: clip(body, 3000) });
+    const ask = this.askCreate({ kind: "plan", goal: goal.id, from: "sous", to: "chef", title, body, options: ["Cook it", "Cancel the goal"], on: { "Cook it": ["goal.cook", goal.id], "Cancel the goal": ["goal.cancel", goal.id], "*": ["goal.replan", goal.id] } }, { role: "sous" });
+    goal.planAsk = ask.id;
+    return ask;
   }
 
   // A goal in the chef's words. The sous chef turns it into tickets.
@@ -328,6 +357,7 @@ export class Kitchen {
       throw new Fail(problem);
     }
     if (goal.status === "done") goal.status = "active";
+    if (goal.status === "proposed") this.putPlan(goal);
     this.emit({ type: "plan", from: t.by, to: "chef", goal: goal.id, task: t.id, text: `Added ${t.id} “${t.title}”${t.needs.length ? ` after ${t.needs.join(", ")}` : ""}` });
     this.changed();
     return t;

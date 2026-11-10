@@ -21,6 +21,7 @@ const HELP = `oui — Oui Chef: give the order, get asked only what is yours to 
                                    --plan ask: see the plan and say go before anything starts
     oui sous                       talk a goal through with the sous chef first
     oui plan <file|->              apply a plan (a goal and its tickets, with needs) as JSON
+                                   --hold: lay it down without starting it; plan the same goal again to change it, oui cook to start
 
   Watch
     oui status                     what is on the pass for you, and where every ticket stands
@@ -34,6 +35,7 @@ const HELP = `oui — Oui Chef: give the order, get asked only what is yours to 
     oui answer <A> ["<text>"]      answer a question (no text: asks you here)
     oui approve <A> [--note ..] [--always]    let a held command through   (--always: never hold this exact command again)
     oui deny <A> [--note ..]
+    oui cook <G>                   say go to a plan that was waiting for you
     oui land <G>                   land a finished goal you deferred
 
   Steer
@@ -68,7 +70,7 @@ const HELP = `oui — Oui Chef: give the order, get asked only what is yours to 
 // ---- arguments
 
 const MULTI = new Set(["option", "accept", "verify", "needs"]);
-const BOOL = new Set(["always", "yes", "follow", "f", "foreground", "open", "direct", "after", "json", "help", "h", "fast", "replace"]);
+const BOOL = new Set(["always", "yes", "follow", "f", "foreground", "open", "direct", "after", "json", "help", "h", "fast", "replace", "hold"]);
 const ALIAS = { p: "project", n: "limit", y: "yes", ticket: "task" };
 
 function parse(argv) {
@@ -172,7 +174,7 @@ const commands = {
     say(`${res.goal} is with the sous chef for planning (project ${res.project}). ${res.check ? "The plan will wait on the pass for your go." : "Watch it: oui status"}`);
   },
 
-  async plan(args) {
+  async plan(args, flags) {
     const src = !args[0] || args[0] === "-" ? await readStdin() : fs.readFileSync(args[0], "utf8");
     let plan;
     try {
@@ -180,9 +182,12 @@ const commands = {
     } catch (e) {
       die(`That plan is not valid JSON: ${e.message}`);
     }
+    if (flags.hold) plan.hold = true;
     const res = await chefRpc("plan", plan);
-    say(`${res.goal} planned:`);
+    say(`${res.goal} planned${res.held ? ", and held: nothing cooks until the chef says so" : ""}:`);
     for (const t of res.tasks) say(`  ${t.id}${t.key ? ` (${t.key})` : ""}  ${t.title}${t.needs.length ? `   after ${t.needs.join(", ")}` : ""}`);
+    if (res.dropped?.length) say(`  dropped: ${res.dropped.join(", ")}`);
+    if (res.held) say(`To change it, plan again with "goalId": "${res.goal}". On the chef's word: oui cook ${res.goal}`);
   },
 
   async task(args, flags) {
@@ -274,6 +279,12 @@ const commands = {
     if (!args[0]) die("oui land <G>");
     const g = await chefRpc("land", { id: ID(args[0]) }, { timeoutMs: 300000 });
     say(g.status === "done" ? `${g.id} landed${g.pr ? `: ${g.pr}` : ""}.` : `${g.id} did not land; see oui asks.`);
+  },
+
+  async cook(args) {
+    if (!args[0]) die("oui cook <G>");
+    const g = await chefRpc("goal.cook", { id: ID(args[0]) });
+    say(`${g.id} is cooking.`);
   },
 
   async goal(args) {

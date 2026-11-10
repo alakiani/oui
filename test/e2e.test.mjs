@@ -348,6 +348,59 @@ test("a plan waits for the chef's go when they ask to see plans first", async ()
   kitchen.config.calls.plan = false;
 });
 
+test("a plan laid down held waits, is changed where it lies, and starts on the chef's word", async () => {
+  const ticket = (key, title, needs = []) => ({ key, kind: "scout", title, brief: "x", needs });
+  const last = "Nothing starts until you say so. In your own words: what to change, and the sous chef plans again with that.";
+  const file = path.join(dir, "held-plan.json");
+  fs.writeFileSync(file, JSON.stringify({ goal: { title: "Talked through", detail: "What the chef asked for." }, tickets: [ticket("prep", "Prep"), ticket("main", "Main", ["prep"]), ticket("side", "Side")] }));
+  const laid = await oui("plan", file, "--hold");
+  assert.equal(laid.code, 0, laid.out);
+  assert.match(laid.out, /planned, and held: nothing cooks until the chef says so/);
+  const goal = /^(G\d+) planned/.exec(laid.out)[1];
+  const g = kitchen.state.goals[goal];
+  assert.equal(g.status, "proposed");
+  const [prep, main, side] = ticketsOf(goal).map((t) => t.id);
+  const planAsk = () => board().asks.find((a) => a.kind === "plan" && a.goal === goal);
+  const ask = planAsk();
+  assert.equal(ask.body, `${prep}  Prep   (scout)\n${main}  Main   (scout, after ${prep})\n${side}  Side   (scout)\n\n${last}`);
+  await new Promise((r) => setTimeout(r, 400));
+  assert.deepEqual([state(prep), board().tasks.find((t) => t.id === prep).line, state(main), state(side)], ["waiting", "when you say to cook", "waiting", "waiting"], "nothing starts while the plan is held");
+
+  // The plan as it now stands: what is kept keeps its number, what is left out is dropped, and it goes on waiting.
+  const again = kitchen.plan({ goalId: goal, goal: { detail: "What the chef asked for, and what was settled.", note: "Dropped the side." }, tickets: [ticket("prep", "Prep, smaller"), ticket("main", "Main", ["prep"]), ticket("sauce", "Sauce", ["main"])] }, who);
+  const sauce = again.tasks[2].id;
+  assert.deepEqual([again.held, again.dropped, again.tasks.slice(0, 2).map((t) => t.id)], [true, [side], [prep, main]]);
+  assert.deepEqual([kitchen.state.tasks[prep].title, kitchen.state.tasks[side].status, g.status, g.detail], ["Prep, smaller", "cancelled", "proposed", "What the chef asked for, and what was settled."]);
+  assert.equal(planAsk().id, ask.id, "the ask on the pass is the same one");
+  assert.equal(planAsk().body, `Dropped the side.\n\n${prep}  Prep, smaller   (scout)\n${main}  Main   (scout, after ${prep})\n${sauce}  Sauce   (scout, after ${main})\n\n${last}`);
+
+  // A plan that does not hold together changes nothing.
+  assert.throws(() => kitchen.plan({ goalId: goal, goal: { title: "Broken" }, tickets: [ticket("main", "Main", [prep])] }, who), new RegExp(`needs ${prep}, which this plan leaves out`));
+  assert.deepEqual([g.title, kitchen.state.tasks[prep].status, kitchen.state.tasks[sauce].status, kitchen.state.tasks[main].needs], ["Talked through", "todo", "todo", [prep]]);
+
+  // One ticket more or less, and the ask on the pass still shows the plan as it stands.
+  const added = await oui("ticket", "add", "--goal", goal, "--kind", "scout", "--title", "Garnish", "--brief", "x");
+  assert.equal(added.code, 0, added.out);
+  const garnish = ticketsOf(goal).find((t) => t.title === "Garnish").id;
+  assert.match(planAsk().body, new RegExp(`${garnish}  Garnish   \\(scout\\)`));
+  assert.equal((await oui("86", garnish)).code, 0);
+  assert.doesNotMatch(planAsk().body, /Garnish/);
+  assert.equal(state(prep), "waiting", "and it is still held");
+
+  // The chef's go, given for the goal.
+  const go = await oui("cook", goal);
+  assert.equal(go.code, 0, go.out);
+  assert.equal(kitchen.state.asks[ask.id].answer, "Cook it");
+  await until("the held goal to finish", () => g.status === "done");
+  assert.equal(ticketsOf(goal).filter((t) => t.status === "done").length, 3);
+
+  // Once it is cooking there is nothing left to say go to, and nothing to hold.
+  const late = await oui("cook", goal);
+  assert.notEqual(late.code, 0);
+  assert.match(late.out, /there is no plan waiting for your go/);
+  assert.throws(() => kitchen.plan({ goalId: goal, hold: true, tickets: [ticket("late", "Late")] }, who), /a plan can be held only before it starts/);
+});
+
 test("a sous chef who runs out of time, or writes no plan, asks the chef instead of guessing", async () => {
   setRole("plan", [{ sleep: 8000 }]);
   kitchen.config.calls.plan = { timeoutMinutes: 0.03 };

@@ -60,6 +60,7 @@ export function methods(kitchen, expo) {
     accept: [CHEF, (p) => expo.accept(p)],
     takeover: [CHEF, (p) => expo.takeover(p)],
     "goal.set": [CHEF, (p) => expo.goalSet(p)],
+    "goal.cook": [CHEF, (p, who) => expo.cook(p, who)],
     land: [
       CHEF,
       async ({ id }) => {

@@ -918,9 +918,25 @@ export class Expediter {
     this.kitchen.withdrawAsks(id, "ticket cancelled");
     t.status = "cancelled";
     t.finishedAt = now();
+    const goal = this.kitchen.state.goals[t.goal];
+    if (goal?.status === "proposed") this.kitchen.putPlan(goal); // the plan on the pass is one ticket shorter
     this.kitchen.emit({ type: "system", from: "chef", to: "board", task: id, goal: t.goal, text: `cancelled ${id}` });
     this.kitchen.changed();
     return t;
+  }
+
+  // The chef's go for a plan that was waiting for it.
+  cook({ id }, who) {
+    const g = this.kitchen.goal(id);
+    if (g.status !== "proposed") throw new Fail(g.status === "active" ? `${id} is already cooking` : `${id} is ${g.status}: there is no plan waiting for your go`);
+    const ask = g.planAsk ? this.kitchen.state.asks[g.planAsk] : null;
+    if (ask?.status === "open") this.kitchen.askAnswer({ id: ask.id, text: "Cook it" }, who);
+    else {
+      Object.assign(g, { status: "active", planAsk: null });
+      this.kitchen.emit({ type: "system", from: "chef", to: "board", goal: id, text: `${id} cook it` });
+      this.kitchen.changed();
+    }
+    return g;
   }
 
   // Take the cook's word for it: skip the checks and the review, still merge.
