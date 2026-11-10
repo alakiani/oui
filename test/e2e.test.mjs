@@ -7,7 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { PLAN, makeDemo, scenario } from "../src/demo.mjs";
 import { buildBoard } from "../src/board.mjs";
 
@@ -21,6 +22,11 @@ script.tasks.sneaky = [{ run: "kubectl --context prod-eu delete deploy/api -n sh
 script.tasks.silent = [...Array.from({ length: 6 }, () => [{ say: "Hm." }, { end: true }]).flat(), { run: 'oui done --summary "Finally."' }];
 // A cook whose first report does not pass the project's check.
 script.tasks.sloppy = [{ write: "broken.txt", content: "x\n" }, { run: 'git add -A && git commit -qm "wip"' }, { run: 'oui done --summary "Done, I think."' }, { end: true }, { run: 'git rm -q broken.txt && git commit -qm "fix"' }, { run: 'oui done --summary "Removed the file the check rejects."' }];
+
+// A cook that gives up, and finishes once the chef tells it where to look.
+script.tasks.stuck = [{ run: 'oui fail "The schema file is missing."' }, { end: true }, { run: 'oui done --summary "Used the schema the chef pointed to."' }];
+// A cook with a question that has options.
+script.tasks.picky = [{ run: 'oui ask "Which one?" --option "One" --option "Two"' }, { end: true }, { run: 'oui done --summary "Went with what the chef picked."' }];
 
 script.tasks.feature = [{ write: "feature.txt", content: "new\n" }, { run: 'git add -A && git commit -qm "Add the feature"' }, { run: 'oui done --summary "Added the feature."' }];
 script.tasks.deploy = [{ run: "git -C {repo} log --format=%s main | grep -q 'Add the feature'", must: true }, { run: "test -f feature.txt", must: true }, { run: 'oui done --summary "Deployed from main."' }];
@@ -43,6 +49,15 @@ async function until(what, check, ms = 20000) {
     await new Promise((r) => setTimeout(r, 40));
   }
 }
+// The chef at a terminal. Not spawnSync: the daemon it talks to lives in this process.
+const oui = (...args) =>
+  new Promise((resolve) => {
+    const child = spawn(process.execPath, [fileURLToPath(new URL("../bin/oui.mjs", import.meta.url)), ...args], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.on("close", (code) => resolve({ code, out }));
+  });
 const state = (id) => board().tasks.find((t) => t.id === id)?.state;
 const askFor = (task, kind) => board().asks.find((a) => a.task === task && (!kind || a.kind === kind));
 
@@ -158,6 +173,26 @@ test("work that fails the project's check is sent back, not merged", async () =>
   assert.ok(!git("ls-tree", "-r", "--name-only", kitchen.state.goals[g.goal].branch).includes("broken.txt"));
 });
 
+test("a failed ticket is retried with the chef's own words as guidance", async () => {
+  const g = kitchen.plan({ goal: { title: "Needs a pointer", project: demo.repo }, tasks: [{ key: "stuck", kind: "scout", title: "Read the schema", brief: "x" }] }, who);
+  const id = g.tasks[0].id;
+  const ask = await until("the failure to reach the chef", () => askFor(id, "stuck"));
+  assert.deepEqual(ask.options, ["Retry", "Accept as done", "Cancel ticket"]);
+  kitchen.askAnswer({ id: ask.id, text: "It is in db/schema.sql" }, who);
+  await until("the retry to finish", () => state(id) === "done");
+});
+
+test("oui answer with a number picks that option", async () => {
+  const g = kitchen.plan({ goal: { title: "A choice", project: demo.repo }, tasks: [{ key: "picky", kind: "scout", title: "Pick one", brief: "x" }] }, who);
+  const id = g.tasks[0].id;
+  const ask = await until("the question to reach the chef", () => askFor(id, "question"));
+  const res = await oui("answer", ask.id, "2");
+  assert.equal(res.code, 0, res.out);
+  assert.equal(kitchen.state.asks[ask.id].answer, ask.options[1]);
+  assert.match(res.out, new RegExp(`${ask.id} answered: ${ask.options[1]}`));
+  await until("the cook to carry on", () => state(id) === "done");
+});
+
 test("a land step mid-plan puts the work on the base branch before what follows", async () => {
   kitchen.projectAdd({ path: demo.repo, landing: "local", verify: [], replace: true });
   const g = kitchen.plan({ goal: { title: "Ship and deploy", project: demo.repo }, tasks: [{ key: "feature", title: "Add the feature", brief: "x" }, { key: "land", kind: "land", title: "Land before deploying", needs: ["feature"] }, { key: "deploy", kind: "ops", title: "Deploy from main", needs: ["land"], brief: "x" }] }, who);
@@ -172,6 +207,17 @@ test("a land step mid-plan puts the work on the base branch before what follows"
   assert.ok(git("log", "--format=%s", "main").includes("Add the feature"));
   await until("the goal to close without a second landing", () => kitchen.state.goals[g.goal].status === "done");
   assert.ok(!board().asks.some((a) => a.goal === g.goal), "there was nothing left to land at the end");
+
+  // Undoing the landing puts main back and leaves the chef's own uncommitted edits alone.
+  const mine = path.join(demo.repo, "src", "app.js");
+  const before = fs.readFileSync(mine, "utf8");
+  fs.writeFileSync(mine, `${before}// the chef is halfway through something\n`);
+  const landing = kitchen.actions({}).find((a) => a.rule === "oui.land" && a.goal === g.goal);
+  const undone = kitchen.undo({ id: landing.id, run: true });
+  assert.ok(undone.ok, JSON.stringify(undone.results));
+  assert.ok(!git("log", "--format=%s", "main").includes("Add the feature"), "main is back where it was");
+  assert.match(fs.readFileSync(mine, "utf8"), /halfway through something/, "the chef's edit survived");
+  fs.writeFileSync(mine, before);
 });
 
 test("the chef's token is needed to decide; an agent's token is not enough", async () => {

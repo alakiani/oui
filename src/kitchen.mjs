@@ -363,7 +363,8 @@ export class Kitchen {
     if (!answer) throw new Fail("An answer needs some text");
     Object.assign(ask, { status: "answered", answer, by: who.role, resolvedAt: now() });
     this.emit({ type: "answer", from: who.role, to: ask.from, task: ask.task, goal: ask.goal, ask: id, text: `${id} → ${answer}` });
-    const action = ask.on?.[answer];
+    // An option the expediter offered, or the chef's own words ("*"), which go along as guidance.
+    const action = ask.on?.[answer] ?? ask.on?.["*"];
     if (action) this.expo?.act(action, ask);
     else this.#deliver(ask, { kind: "answer", by: who.role, question: ask.title, text: answer });
     this.changed();

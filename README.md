@@ -43,10 +43,10 @@ Needs Node 20 or newer, git, and [Claude Code](https://code.claude.com) logged i
 git clone https://github.com/alakiani/oui.git
 cd oui
 npm link        # puts `oui` on your PATH
-npm test        # 38 tests; takes about 30 seconds
+npm test        # 40 tests; takes under a minute
 ```
 
-There are no dependencies to install.
+There are no dependencies to install. New here? [Getting started](docs/getting-started.md) walks from the demo to your first real goal, then to Herdr.
 
 ## A first service, without touching anything real
 

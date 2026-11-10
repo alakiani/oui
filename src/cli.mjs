@@ -240,9 +240,13 @@ const commands = {
       rl.close();
       text = ask.options?.[Number(reply) - 1] ?? reply;
       if (!text) die("Nothing sent.");
+    } else if (/^\d+$/.test(text) && !process.env.OUI_ROLE) {
+      // `oui answer A1 2` picks the second option, the same as at the prompt.
+      const { ask } = await chefRpc("show", { id });
+      text = ask.options?.[Number(text) - 1] ?? text;
     }
     await chefRpc("answer", { id, text });
-    say(`${id} answered.`);
+    say(`${id} answered: ${text}`);
   },
 
   async approve(args, flags) {
@@ -408,7 +412,9 @@ const commands = {
     const { kitchen } = await runDaemon({ port: flags.port ?? 7331 });
     kitchen.projectAdd({ path: demo.repo, landing: "local" });
     for (const plan of PLAN) kitchen.plan(plan, { role: "chef" });
-    say(`\nOpen the board:  http://127.0.0.1:${kitchen.port}\nIn another terminal, try:\n  export OUI_HOME=${demo.home}\n  oui status        oui asks        oui answer A1 2        oui approve A3        oui actions\n\nCtrl-C stops the demo.`);
+    // The demo world is a throwaway: it goes when the demo does.
+    process.on("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
+    say(`\nOpen the board:  http://127.0.0.1:${kitchen.port}\nIn another terminal, try:\n  export OUI_HOME=${demo.home}\n  oui status        oui asks        oui answer A1 2        oui approve A3        oui actions\n\nCtrl-C stops the demo and removes its folder.`);
   },
 
   // ---- cook

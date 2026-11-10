@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { P, ensureDir } from "./paths.mjs";
+import { sh } from "./guard/shell.mjs";
 
 export function git(cwd, args, opts = {}) {
   const res = spawnSync("git", args, { cwd, encoding: "utf8", timeout: opts.timeoutMs ?? 60000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(opts.env ?? {}) } });
@@ -85,7 +86,8 @@ export function landLocal(project, goal) {
   const current = git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).out;
   const res = current === project.base ? git(repo, ["merge", "--ff-only", goal.branch]) : git(repo, ["fetch", ".", `${goal.branch}:${project.base}`]);
   if (!res.ok) return { ok: false, error: res.err || res.out };
-  const undo = current === project.base ? `git -C ${repo} reset --hard ${before.out}` : `git -C ${repo} update-ref refs/heads/${project.base} ${before.out}`;
+  // --keep, not --hard: the chef's own uncommitted edits survive, and git refuses if they are in the way.
+  const undo = sh(current === project.base ? ["git", "-C", repo, "reset", "--keep", before.out] : ["git", "-C", repo, "update-ref", `refs/heads/${project.base}`, before.out]);
   return { ok: true, before: before.out, after: git(repo, ["rev-parse", project.base]).out, undo, checkedOut: current === project.base };
 }
 
