@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oui Chef</title>
+<meta name="description" content="An orchestrator for coding agents, run like a kitchen. You give the order, cooks carry it out, and you are interrupted only for what is yours to decide.">
+<meta property="og:title" content="Oui Chef">
+<meta property="og:description" content="Run your coding agents like a kitchen: one board, tickets in dependency order, and a pass that holds anything risky for you.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23141a22'/%3E%3Cpath d='M6 22h20M8.5 22a7.5 7.5 0 0 1 15 0M16 14.5v-3' fill='none' stroke='%23f2a93b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a kitchen during service. A steel rail of order dockets runs across the top of the
+   page, and under it the amber line of the pass. Copy keeps to a left-hand column; sections
+   are set apart by space and a hairline, not by boxes. Colours are the board's own. */
+:root {
+  --bg: #0e1116; --panel: #151a22; --raised: #1b222c; --line: #29323f; --line-soft: #1e2631;
+  --text: #e7ebf1; --dim: #9ca7b7; --faint: #6f7b8a;
+  --amber: #f2a93b; --amber-ink: #1a1305; --amber-soft: #f2a93b1f;
+  --green: #5ab884; --blue: #62a9ff; --red: #f0716a; --violet: #ab98f8;
+  --paper: #f2eee4; --paper-ink: #1f1b14; --paper-dim: #6c6454; --paper-line: #cdc5b3;
+  --stamp-done: #1f7a45; --stamp-call: #a55a00; --stamp-held: #b5372f; --stamp-cook: #1c5fb8; --stamp-wait: #6c6454;
+  --steel-a: #4a5565; --steel-b: #232b36; --shadow: #0009;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f4f5f7; --panel: #ffffff; --raised: #eef0f4; --line: #d5dbe4; --line-soft: #e4e8ee;
+    --text: #151a23; --dim: #4f5a6c; --faint: #7d8797;
+    --amber: #b06500; --amber-ink: #ffffff; --amber-soft: #b0650016;
+    --green: #2c8251; --blue: #1d6cd3; --red: #c5403a; --violet: #6851d0;
+    --paper: #fffdf6; --paper-ink: #1f1b14; --paper-dim: #6c6454; --paper-line: #d9d2c1;
+    --steel-a: #b9c0ca; --steel-b: #8a93a0; --shadow: #0f172a2e;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f4f5f7; --panel: #ffffff; --raised: #eef0f4; --line: #d5dbe4; --line-soft: #e4e8ee;
+  --text: #151a23; --dim: #4f5a6c; --faint: #7d8797;
+  --amber: #b06500; --amber-ink: #ffffff; --amber-soft: #b0650016;
+  --green: #2c8251; --blue: #1d6cd3; --red: #c5403a; --violet: #6851d0;
+  --paper: #fffdf6; --paper-ink: #1f1b14; --paper-dim: #6c6454; --paper-line: #d9d2c1;
+  --steel-a: #b9c0ca; --steel-b: #8a93a0; --shadow: #0f172a2e;
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 1.0625rem/1.6 var(--display); font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
+img { max-width: 100%; height: auto; display: block; }
+a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--amber); }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+code, kbd, pre { font-family: var(--mono); }
+p code, li code, dd code, figcaption code { font-size: .86em; padding: .1em .38em; border-radius: 4px; background: var(--raised); border: 1px solid var(--line-soft); white-space: nowrap; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+p { margin: 0; }
+
+.wrap { max-width: 1120px; margin-inline: auto; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+.band { padding-block: clamp(56px, 8vw, 104px); border-top: 1px solid var(--line-soft); }
+.label { font: 500 .75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
+.band h2 { font-size: clamp(1.9rem, 3.6vw, 2.75rem); font-weight: 680; letter-spacing: -.025em; line-height: 1.06; margin-top: 14px; max-width: 20ch; }
+.lede { color: var(--dim); max-width: 62ch; margin-top: 18px; font-size: 1.125rem; }
+.head { display: grid; gap: 0; margin-bottom: clamp(28px, 4vw, 48px); }
+
+/* ---- top bar */
+.top { display: flex; align-items: center; gap: 20px; padding-block: 18px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; letter-spacing: -.01em; text-decoration: none; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.top nav { margin-left: auto; display: flex; align-items: center; gap: clamp(12px, 2.4vw, 28px); font-size: .95rem; }
+.top nav a { color: var(--dim); text-decoration: none; }
+.top nav a:hover { color: var(--text); }
+.top nav .gh { color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; }
+.top nav .gh:hover { border-color: var(--amber); }
+@media (max-width: 720px) { .top nav a:not(.gh) { display: none; } }
+
+/* ---- hero */
+.hero { padding-block: clamp(28px, 5vw, 64px) clamp(40px, 6vw, 80px); }
+.hero h1 { font-size: clamp(2.7rem, 7.4vw, 5.4rem); font-weight: 760; letter-spacing: -.028em; line-height: .98; max-width: 13ch; }
+.hero h1 em { font-style: normal; color: var(--amber); }
+.hero .sub { margin-top: 24px; max-width: 56ch; font-size: clamp(1.1rem, 1.6vw, 1.3rem); color: var(--dim); line-height: 1.5; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 10px; font: 600 1rem/1 var(--display); text-decoration: none; border: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; }
+.btn:hover { border-color: var(--amber); }
+.btn.go { background: var(--amber); color: var(--amber-ink); border-color: transparent; }
+.btn.go:hover { filter: brightness(1.06); }
+
+/* ---- the service: a rail of dockets over the pass */
+.service { margin-top: clamp(40px, 6vw, 72px); }
+.try { font: 400 .8rem/1.4 var(--mono); color: var(--faint); margin-bottom: 14px; }
+.try b { color: var(--amber); font-weight: 500; letter-spacing: .1em; text-transform: uppercase; margin-right: 8px; }
+.line { position: relative; overflow-x: auto; overflow-y: hidden; padding: 0 4px 26px; scrollbar-width: thin; }
+.rail { position: sticky; left: 0; height: 12px; border-radius: 6px; background: linear-gradient(var(--steel-a), var(--steel-b)); box-shadow: inset 0 1px 0 #ffffff26, 0 2px 6px var(--shadow); }
+.dockets { display: grid; grid-template-columns: repeat(4, minmax(214px, 1fr)); gap: clamp(14px, 2.2vw, 28px); padding: 0 clamp(6px, 2vw, 26px); margin-top: -6px; min-width: 940px; }
+.hang { position: relative; padding-top: 16px; transform: rotate(var(--r, 0deg)); transform-origin: 50% 0; filter: drop-shadow(0 14px 16px var(--shadow)); animation: settle 1.1s cubic-bezier(.3, 1.4, .5, 1) both; }
+.hang:nth-child(1) { --r: -1.3deg; } .hang:nth-child(2) { --r: .9deg; animation-delay: .08s; } .hang:nth-child(3) { --r: -.7deg; animation-delay: .16s; } .hang:nth-child(4) { --r: 1.5deg; animation-delay: .24s; }
+.hang::before { content: ""; position: absolute; top: 0; left: 50%; width: 30px; height: 22px; margin-left: -15px; border-radius: 3px; background: linear-gradient(var(--steel-a), var(--steel-b)); box-shadow: inset 0 1px 0 #ffffff33; z-index: 1; }
+@keyframes settle { from { transform: rotate(calc(var(--r) * -4)); } to { transform: rotate(var(--r)); } }
+.docket { --z: 8px; background: var(--paper); color: var(--paper-ink); font: 400 .8rem/1.5 var(--mono); padding: 22px 16px calc(var(--z) + 16px); min-height: 232px; display: flex; flex-direction: column; gap: 10px;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(2 * var(--z)) 100%; mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(2 * var(--z)) 100%; }
+.docket header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 8px; border-bottom: 1px dashed var(--paper-line); color: var(--paper-dim); letter-spacing: .06em; text-transform: uppercase; font-size: .72rem; }
+.docket header b { color: var(--paper-ink); font-weight: 600; font-size: .95rem; letter-spacing: 0; }
+.docket h3 { font: 600 .92rem/1.35 var(--mono); }
+.docket .note { color: var(--paper-dim); font-size: .76rem; flex: 1; }
+.docket footer { border-top: 1px dashed var(--paper-line); padding-top: 12px; }
+.stamp { display: inline-block; border: 2px solid currentColor; border-radius: 3px; padding: 3px 8px; font-weight: 600; font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; transform: rotate(-3deg); color: var(--stamp-wait); }
+.docket[data-state="done"] .stamp { color: var(--stamp-done); }
+.docket[data-state="call"] .stamp, .docket[data-state="held"] .stamp { color: var(--stamp-call); }
+.docket[data-state="held"] .stamp { color: var(--stamp-held); }
+.docket[data-state="cooking"] .stamp { color: var(--stamp-cook); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
+
+.pass { position: relative; margin-top: 6px; padding: 22px 0 0; border-top: 2px solid var(--amber); }
+.pass::before { content: ""; position: absolute; inset: -2px 0 auto; height: 46px; background: linear-gradient(var(--amber-soft), transparent); pointer-events: none; }
+.pass-head { position: relative; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.pass-head .count { font: 500 .8rem/1 var(--mono); padding: 5px 10px; border-radius: 999px; background: var(--amber); color: var(--amber-ink); }
+.pass-head .count[data-clear="true"] { background: none; color: var(--green); border: 1px solid var(--green); }
+.pass-head .about { color: var(--faint); font-size: .92rem; }
+.asks { position: relative; margin-top: 16px; display: grid; gap: 12px; max-width: 640px; }
+.ask { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 12px; padding: 16px 18px 18px; display: grid; gap: 10px; }
+.ask .meta { display: flex; gap: 10px; align-items: center; font: 500 .72rem/1 var(--mono); color: var(--faint); letter-spacing: .06em; }
+.ask .kind { text-transform: uppercase; padding: 4px 7px; border-radius: 4px; background: var(--amber-soft); color: var(--amber); letter-spacing: .08em; }
+.ask .kind.risk { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
+.ask h3 { font-size: 1.12rem; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; }
+.ask p { color: var(--dim); font-size: .96rem; line-height: 1.5; }
+.ask pre { margin: 0; padding: 11px 13px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line-soft); font-size: .8rem; overflow-x: auto; }
+.ask .undo { color: var(--green); font-size: .9rem; }
+.ask .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.ask .acts button { height: 38px; padding: 0 15px; border-radius: 8px; border: 1px solid var(--line); background: var(--raised); color: var(--text); font: 600 .92rem/1 var(--display); cursor: pointer; }
+.ask .acts button:hover { border-color: var(--amber); }
+.ask .acts button.go { background: var(--amber); color: var(--amber-ink); border-color: transparent; }
+.ask.quiet { border-left-color: var(--line); }
+.ask.clear { border-left-color: var(--green); }
+
+/* ---- the board */
+.shot { margin: 0; }
+.shot .frame { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 30px 60px -20px var(--shadow); background: #0e1116; }
+.shot figcaption { margin-top: 14px; color: var(--faint); font-size: .92rem; }
+.reads { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(20px, 3vw, 40px); margin-top: clamp(28px, 4vw, 44px); }
+.reads h3 { font-size: 1.08rem; font-weight: 650; }
+.reads p { color: var(--dim); font-size: .98rem; margin-top: 6px; }
+@media (max-width: 760px) { .reads { grid-template-columns: 1fr; } }
+
+/* ---- the brigade */
+.brigade { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 clamp(24px, 4vw, 56px); }
+.brigade > div { padding: 22px 0 26px; border-top: 1px solid var(--line); display: grid; gap: 8px; align-content: start; }
+.brigade .who { font: 500 .72rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.brigade .who.you { color: var(--amber); } .brigade .who.model { color: var(--violet); } .brigade .who.code { color: var(--green); }
+.brigade h3 { font-size: 1.4rem; font-weight: 680; letter-spacing: -.02em; }
+.brigade p { color: var(--dim); font-size: .98rem; }
+@media (max-width: 860px) { .brigade { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 540px) { .brigade { grid-template-columns: 1fr; } }
+
+/* ---- from order to plate */
+.flow { display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); gap: clamp(28px, 5vw, 72px); align-items: start; }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; display: grid; gap: 22px; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 4px 14px; }
+.steps li::before { content: counter(step); font: 500 .8rem/1 var(--mono); color: var(--amber); border: 1px solid var(--line); border-radius: 50%; width: 30px; height: 30px; display: grid; place-items: center; grid-row: span 2; }
+.steps b { font-weight: 650; font-size: 1.08rem; }
+.steps span { color: var(--dim); font-size: .98rem; grid-column: 2; min-width: 0; }
+.steps span code { white-space: normal; overflow-wrap: anywhere; }
+.term { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
+.term .bar { display: flex; gap: 6px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
+.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.term pre { margin: 0; padding: 16px 18px 20px; font-size: .74rem; line-height: 1.65; overflow-x: auto; color: var(--dim); }
+.term pre b { color: var(--text); font-weight: 500; } .term pre .a { color: var(--amber); } .term pre .g { color: var(--green); } .term pre .f { color: var(--faint); }
+@media (max-width: 860px) { .flow { grid-template-columns: 1fr; } }
+
+/* ---- the pass, in four tiers */
+.tiers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.tiers > div { padding: 22px 20px 24px; border-left: 1px solid var(--line); display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tiers > div:first-child { border-left: 0; }
+.tiers .t { font: 600 .8rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; color: var(--c); }
+.tiers .t::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+.tiers p { color: var(--dim); font-size: .96rem; }
+.tiers ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; font: 400 .76rem/1.45 var(--mono); color: var(--text); }
+.tiers li { padding-left: 12px; border-left: 2px solid color-mix(in srgb, var(--c) 55%, transparent); overflow-wrap: anywhere; }
+.aside { margin-top: 22px; color: var(--faint); font-size: .96rem; max-width: 70ch; }
+@media (max-width: 900px) { .tiers { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tiers > div:nth-child(3) { border-left: 0; } .tiers > div:nth-child(n+3) { border-top: 1px solid var(--line); } }
+@media (max-width: 520px) { .tiers { grid-template-columns: 1fr; } .tiers > div { border-left: 0; } .tiers > div + div { border-top: 1px solid var(--line); } }
+
+/* ---- on the menu */
+.menu { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(28px, 5vw, 72px); }
+.menu > div { padding: 20px 0 22px; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.menu h3 { font-size: 1.15rem; font-weight: 660; letter-spacing: -.01em; }
+.menu p { color: var(--dim); font-size: .98rem; }
+@media (max-width: 760px) { .menu { grid-template-columns: 1fr; } }
+
+/* ---- make it yours */
+.yours { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(28px, 5vw, 72px); align-items: center; }
+.yours .head { margin-bottom: 0; }
+.carte { background: var(--paper); color: var(--paper-ink); border-radius: 4px; padding: 28px clamp(18px, 3vw, 32px) 30px; box-shadow: 0 24px 40px -18px var(--shadow); font-family: var(--mono); transform: rotate(.6deg); }
+.carte .title { text-align: center; font: 600 .78rem/1 var(--mono); letter-spacing: .28em; text-transform: uppercase; color: var(--paper-dim); padding-bottom: 16px; border-bottom: 1px dashed var(--paper-line); }
+.carte dl { margin: 18px 0 0; display: grid; gap: 14px; }
+.carte .row { display: grid; grid-template-columns: auto minmax(12px, 1fr) minmax(0, 60%); align-items: baseline; gap: 8px; }
+.carte dt { font-weight: 600; font-size: .92rem; }
+.carte .dots { border-bottom: 2px dotted var(--paper-line); transform: translateY(-4px); }
+.carte dd { margin: 0; font-size: .78rem; line-height: 1.45; color: var(--paper-dim); }
+.carte .cmd { margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--paper-line); font-size: .8rem; color: var(--paper-ink); }
+.carte .cmd span { color: var(--paper-dim); }
+@media (max-width: 860px) { .yours { grid-template-columns: 1fr; } }
+
+/* ---- start */
+.start { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: clamp(28px, 5vw, 72px); align-items: start; }
+.start .head { margin-bottom: 0; }
+.start .lede + .lede { margin-top: 12px; }
+.codebox { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; min-width: 0; overflow: hidden; }
+.codebox .bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 8px 18px; border-bottom: 1px solid var(--line-soft); font: 500 .72rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.codebox pre { margin: 0; padding: 16px 18px 20px; font-size: .88rem; line-height: 1.9; overflow-x: auto; }
+.codebox pre .p { color: var(--faint); user-select: none; }
+.codebox pre .c { color: var(--faint); }
+.copy { height: 30px; padding: 0 11px; border-radius: 7px; border: 1px solid var(--line); background: var(--raised); color: var(--dim); font: 500 .74rem/1 var(--mono); cursor: pointer; }
+.copy:hover { color: var(--text); border-color: var(--amber); }
+@media (max-width: 860px) { .start { grid-template-columns: 1fr; } }
+
+/* ---- what is proven */
+.proof { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(24px, 5vw, 72px); }
+.proof h3 { font: 600 .8rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; display: flex; gap: 8px; align-items: center; }
+.proof h3::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.proof .yes h3 { color: var(--green); } .proof .no h3 { color: var(--faint); }
+.proof ul { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; color: var(--dim); font-size: .98rem; }
+.proof li { padding-left: 16px; border-left: 1px solid var(--line); }
+@media (max-width: 700px) { .proof { grid-template-columns: 1fr; } }
+
+footer.end { border-top: 1px solid var(--line-soft); padding-block: 36px 48px; color: var(--faint); font-size: .92rem; }
+footer.end .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: baseline; }
+footer.end .fine { margin-left: auto; }
+@media (max-width: 700px) { footer.end .fine { margin-left: 0; } }
+
+@media (prefers-reduced-motion: reduce) { .hang, .docket[data-state="cooking"] .stamp { animation: none; } html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="#top" aria-label="Oui Chef">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#141a22"/><path d="M6 22h20M8.5 22a7.5 7.5 0 0 1 15 0M16 14.5v-3" fill="none" stroke="#f2a93b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Oui Chef
+  </a>
+  <nav aria-label="Sections">
+    <a href="#brigade">The kitchen</a>
+    <a href="#pass">The pass</a>
+    <a href="#yours">Make it yours</a>
+    <a href="#start">Get started</a>
+    <a class="gh" href="https://github.com/alakiani/oui">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="wrap hero">
+    <h1>Run your coding agents like a <em>kitchen</em>.</h1>
+    <p class="sub">You give the order. A sous chef breaks it into tickets, cooks carry them out at their own stations, and you are interrupted only for what is yours to decide.</p>
+    <div class="cta">
+      <a class="btn go" href="#start">Get started</a>
+      <a class="btn" href="https://github.com/alakiani/oui">View on GitHub</a>
+    </div>
+
+    <div class="service">
+      <p class="try"><b>Try it</b>A small mock of one goal. Answer what is on the pass and watch the tickets move.</p>
+      <div class="line" role="group" aria-label="Tickets for the goal: Rate-limit the public API">
+        <div class="rail" aria-hidden="true"></div>
+        <div class="dockets">
+          <div class="hang"><article class="docket" id="t1" data-state="done">
+            <header><b>T1</b><span>build</span></header>
+            <h3>Token-bucket limiter middleware</h3>
+            <p class="note">Checked by the inspector, merged into the goal's branch.</p>
+            <footer><span class="stamp">Done</span></footer>
+          </article></div>
+          <div class="hang"><article class="docket" id="t2" data-state="call">
+            <header><b>T2</b><span>decide</span></header>
+            <h3>Count limits per key or per IP?</h3>
+            <p class="note">A question for you. It has no cook.</p>
+            <footer><span class="stamp">Your call</span></footer>
+          </article></div>
+          <div class="hang"><article class="docket" id="t3" data-state="waiting">
+            <header><b>T3</b><span>build</span></header>
+            <h3>Apply the limiter to public routes</h3>
+            <p class="note">After T1 and T2.</p>
+            <footer><span class="stamp">Waiting</span></footer>
+          </article></div>
+          <div class="hang"><article class="docket" id="t4" data-state="waiting">
+            <header><b>T4</b><span>ops</span></header>
+            <h3>Roll out to production</h3>
+            <p class="note">After T3.</p>
+            <footer><span class="stamp">Waiting</span></footer>
+          </article></div>
+        </div>
+      </div>
+
+      <div class="pass">
+        <div class="pass-head">
+          <span class="label">The pass</span>
+          <span class="count" id="count">1 needs you</span>
+          <span class="about">The only list you have to read.</span>
+        </div>
+        <div class="asks" id="asks" aria-live="polite">
+          <div class="ask">
+            <div class="meta"><span class="kind">Decision</span><span>T2</span><span>holds up 2 tickets</span></div>
+            <h3>Count limits per key or per IP?</h3>
+            <p>It sets what callers without a key get. The limiter itself is already built; only the tickets that need this answer are waiting.</p>
+            <div class="acts"><button type="button" class="go" data-act="decide" data-text="Per API key">Per API key</button><button type="button" data-act="decide" data-text="Per IP address">Per IP address</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="board">
+    <div class="wrap">
+      <div class="head">
+        <span class="label">The board</span>
+        <h2>Every ticket, in every project, on one board.</h2>
+        <p class="lede">You do not keep track of sessions. Tickets sit left to right in the order they must happen, and the board says which one starts next.</p>
+      </div>
+      <figure class="shot">
+        <div class="frame"><img src="board.png" width="2880" height="1760" alt="The Oui Chef board: the pass on the left with an access request and a held production command, and three goals on the right, each a lane of tickets joined by lines showing what waits on what." loading="lazy"></div>
+        <figcaption>The board in a browser, during <code>oui demo</code>.</figcaption>
+      </figure>
+      <div class="reads">
+        <div><h3>The pass, top left</h3><p>Questions, access requests and held commands, sorted by how much work waits behind each one.</p></div>
+        <div><h3>A lane for each goal</h3><p>Each ticket is one cook's piece of work. The lines show what waits on what.</p></div>
+        <div><h3>Comms</h3><p>Who said what to whom: cooks, the sous chef, the inspector and the pass.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="brigade">
+    <div class="wrap">
+      <div class="head">
+        <span class="label">The kitchen</span>
+        <h2>Who does what.</h2>
+        <p class="lede">Everything mechanical is plain code. A model is used only where judgement is needed, each time from a few paragraphs, ending in one command.</p>
+      </div>
+      <div class="brigade">
+        <div><span class="who you">You</span><h3>Chef</h3><p>Give goals, answer what only you can, approve what is risky.</p></div>
+        <div><span class="who model">A model</span><h3>Sous chef</h3><p>Turns a goal into tickets and their order. Answers the cooks' questions that the goal already settles, and passes the rest up, reworded.</p></div>
+        <div><span class="who model">Claude Code, one per ticket</span><h3>Cook</h3><p>Works at its own station, a git worktree. Runs its own commands, commits, reports.</p></div>
+        <div><span class="who model">A model, read-only</span><h3>Inspector</h3><p>Checks each finished ticket against its brief before it merges. You can add inspectors of your own.</p></div>
+        <div><span class="who code">Plain code</span><h3>Expediter</h3><p>Fires tickets in order, delivers answers, runs your checks, merges, lands.</p></div>
+        <div><span class="who code">Plain code</span><h3>The pass</h3><p>A hook on every tool call. It lets the call through, records it with an undo, holds it for you, or refuses it.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="flow">
+    <div class="wrap">
+      <div class="head">
+        <span class="label">A service</span>
+        <h2>From the order to the plate.</h2>
+      </div>
+      <div class="flow">
+        <ol class="steps">
+          <li><b>Give the goal, in your own words.</b><span><code>oui go "Add rate limiting to the public API"</code></span></li>
+          <li><b>The sous chef writes the tickets.</b><span>It reads the repository first. Each ticket says what it needs before it can start.</span></li>
+          <li><b>Cooks start when what they need is finished.</b><span>Each works in its own git worktree, so you can keep working in the repository meanwhile.</span></li>
+          <li><b>A question that is yours goes to the pass.</b><span>Only the tickets that need the answer wait for it. The rest keep cooking.</span></li>
+          <li><b>Finished work is checked, then merged.</b><span>Your project's checks run, the inspector reads the diff, and the ticket merges into one branch for the goal.</span></li>
+          <li><b>You land the goal.</b><span>One decision at the end. Landing is recorded, and <code>oui undo</code> puts it back.</span></li>
+        </ol>
+        <div class="term" role="img" aria-label="Terminal output of oui status: one ask on the pass, and four tickets of goal G1 with their states.">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+<pre><span class="f">$</span> <b>oui status</b>
+<span class="a">1 need you</span> · 1 running · 0 in review · 0 ready · 1 waiting · 1 done
+
+<b>ON THE PASS</b>
+  <span class="a">A1 [decision]</span> T2 Count limits per key or per IP?  (holds up 2 tickets)
+      options: Per API key | Per IP address   (asker would pick: Per API key)
+
+<b>G1 Rate-limit the public API</b>  [shop-api] 1/4
+  T1   <span class="g">done</span>        Token-bucket limiter middleware
+  T2   <span class="a">at the pass</span> Count limits per key or per IP?
+  T3   waiting     Apply the limiter to public routes <span class="f">· after T2</span>
+  T4   waiting     Roll out to production <span class="f">· after T3</span>
+
+<span class="f">$</span> <b>oui answer A1 1</b>
+A1 answered: Per API key</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="pass">
+    <div class="wrap">
+      <div class="head">
+        <span class="label">The pass</span>
+        <h2>Risky is held. Reversible is recorded.</h2>
+        <p class="lede">Every command a cook runs crosses the pass first. It reads the command the way a careful person would: through pipes, <code>&amp;&amp;</code>, <code>bash -c</code>, <code>sudo</code> and <code>ssh host '…'</code>.</p>
+      </div>
+      <div class="tiers">
+        <div style="--c: var(--green)"><span class="t">Run</span><p>Goes through. Not recorded.</p><ul><li>tests and builds</li><li>git commit</li><li>kubectl get</li><li>terraform plan</li></ul></div>
+        <div style="--c: var(--blue)"><span class="t">Run + undo</span><p>Goes through, and is recorded with the commands that put it back.</p><ul><li>git push of a ticket branch</li><li>kubectl apply on staging</li><li>helm upgrade outside production</li></ul></div>
+        <div style="--c: var(--amber)"><span class="t">Hold</span><p>Stops at the pass. You see the command and how it would be undone.</p><ul><li>gh pr merge</li><li>anything in production</li><li>terraform apply</li><li>npm publish</li><li>rm -rf outside the station</li></ul></div>
+        <div style="--c: var(--red)"><span class="t">Never</span><p>Refused.</p><ul><li>reading the chef's token</li><li>calling the chef's commands</li><li>talking to the daemon directly</li></ul></div>
+      </div>
+      <p class="aside">The pass is a seatbelt, not a sandbox. It catches what an eager agent does in plain sight. It cannot see inside a script it has not read.</p>
+    </div>
+  </section>
+
+  <section class="band" id="menu">
+    <div class="wrap">
+      <div class="head">
+        <span class="label">On the menu</span>
+        <h2>Asked once, about what is yours.</h2>
+      </div>
+      <div class="menu">
+        <div><h3>Questions as tickets</h3><p>A decision only you can make goes to the pass when the plan is written. The rest of the plan starts without it.</p></div>
+        <div><h3>See the plan first</h3><p><code>oui go "…" --plan ask</code> puts the plan on the pass: the tickets, what waits on what, and what the sous chef assumed.</p></div>
+        <div><h3>An undo for what changed</h3><p><code>oui actions</code> lists everything a cook changed outside its station. <code>oui undo X12</code> shows the recipe, and <code>--yes</code> runs it.</p></div>
+        <div><h3>Inspectors of your own</h3><p>A section headed <code>review: security</code> in your prompts is one more reviewer, reading each finished ticket separately.</p></div>
+        <div><h3>Watch any cook</h3><p>Cooks run as terminals in Herdr or tmux, or headless. <code>oui takeover T4</code> steps into one, and the pass stays in place.</p></div>
+        <div><h3>Small contexts</h3><p>A cook sees its ticket, the goal in your words and a few lines from the tickets it builds on. Never a transcript.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="yours">
+    <div class="wrap yours">
+      <div class="head">
+        <span class="label">Make it yours</span>
+        <h2>It suggests a way of working. It does not insist.</h2>
+        <p class="lede">How a goal is talked through, how work is cut into tickets and what a reviewer looks for are four plain text files. Copy one, change it, and the next conversation uses it. Nothing restarts.</p>
+        <p class="lede">For one standing preference you do not need a file: <code>oui remember "always squash-merge"</code>.</p>
+      </div>
+      <div class="carte">
+        <div class="title">La carte</div>
+        <dl>
+          <div class="row"><dt>sous.md</dt><span class="dots" aria-hidden="true"></span><dd>how the sous chef talks a goal through with you</dd></div>
+          <div class="row"><dt>tickets.md</dt><span class="dots" aria-hidden="true"></span><dd>how work is cut into tickets and briefed</dd></div>
+          <div class="row"><dt>roles.md</dt><span class="dots" aria-hidden="true"></span><dd>the planner, the triage of questions, the inspectors</dd></div>
+          <div class="row"><dt>cook.md</dt><span class="dots" aria-hidden="true"></span><dd>what every cook is told</dd></div>
+        </dl>
+        <div class="cmd"><span>$</span> oui prompts copy sous</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="start">
+    <div class="wrap start">
+      <div class="head">
+        <span class="label">Get started</span>
+        <h2>A first service that touches nothing real.</h2>
+        <p class="lede">You need Node 20 or newer, git, and Claude Code logged in. There are no dependencies to install.</p>
+        <p class="lede"><code>oui demo</code> starts a throwaway kitchen: a scratch repository, stand-in cooks and a fake <code>kubectl</code> that only prints. The <a href="https://github.com/alakiani/oui/blob/main/docs/getting-started.md">getting started guide</a> goes from there to your first real goal.</p>
+      </div>
+      <div class="codebox">
+        <div class="bar"><span>In a terminal</span><button type="button" class="copy" id="copy" data-copy="git clone https://github.com/alakiani/oui.git&#10;cd oui&#10;npm link&#10;oui demo">Copy</button></div>
+<pre id="install"><span class="p">$ </span>git clone https://github.com/alakiani/oui.git
+<span class="p">$ </span>cd oui
+<span class="p">$ </span>npm link        <span class="c"># puts oui on your PATH</span>
+<span class="p">$ </span>oui demo        <span class="c"># open the address it prints</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="proof">
+    <div class="wrap">
+      <div class="head">
+        <span class="label">Where it stands</span>
+        <h2>What is proven, and what is not.</h2>
+        <p class="lede">Oui Chef is young: version 0.2, MIT licensed. The <a href="https://github.com/alakiani/oui#what-was-and-was-not-verified">README</a> keeps the full list.</p>
+      </div>
+      <div class="proof">
+        <div class="yes">
+          <h3>Proven</h3>
+          <ul>
+            <li>The whole loop with real Claude Code agents on a scratch repository: plan, cook, hold at the pass, approve, review, merge, land.</li>
+            <li>50 automated tests: the ticket graph, the pass against about 200 commands, and the full loop with scripted cooks.</li>
+            <li>The web board in dark, light and at phone width.</li>
+          </ul>
+        </div>
+        <div class="no">
+          <h3>Not yet</h3>
+          <ul>
+            <li>Real clusters and forges. In testing, <code>kubectl</code>, <code>helm</code> and <code>gh</code> were stand-ins.</li>
+            <li>Cooks as terminals inside real Herdr.</li>
+            <li>Other agent CLIs. Cooks are Claude Code today.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="end">
+  <div class="wrap">
+    <span>Oui Chef · MIT licence</span>
+    <a href="https://github.com/alakiani/oui">GitHub</a>
+    <a href="https://github.com/alakiani/oui/blob/main/docs/getting-started.md">Getting started</a>
+    <span class="fine">Not affiliated with any restaurant, guide or chef.</span>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const STAMP = { done: "Done", call: "Your call", waiting: "Waiting", cooking: "Cooking", held: "Held at the pass" };
+  const START = {
+    t1: ["done", "Checked by the inspector, merged into the goal's branch."],
+    t2: ["call", "A question for you. It has no cook."],
+    t3: ["waiting", "After T1 and T2."],
+    t4: ["waiting", "After T3."],
+  };
+  const beat = matchMedia("(prefers-reduced-motion: reduce)").matches ? 250 : 1300;
+  let timers = [];
+  const later = (fn, n = 1) => timers.push(setTimeout(fn, beat * n));
+
+  function docket(id, state, note) {
+    const el = $(id);
+    el.dataset.state = state;
+    el.querySelector(".stamp").textContent = STAMP[state];
+    if (note) el.querySelector(".note").textContent = note;
+  }
+  function pass(count, html) {
+    $("count").textContent = count;
+    $("count").dataset.clear = String(!/needs you/.test(count));
+    $("asks").innerHTML = html;
+  }
+  const btn = (act, label, go, text) => `<button type="button"${go ? ' class="go"' : ""} data-act="${act}"${text ? ` data-text="${text}"` : ""}>${label}</button>`;
+  const quiet = (text) => `<div class="ask quiet"><p>${text}</p></div>`;
+  const ASK = {
+    decide: `<div class="ask"><div class="meta"><span class="kind">Decision</span><span>T2</span><span>holds up 2 tickets</span></div><h3>Count limits per key or per IP?</h3><p>It sets what callers without a key get. The limiter itself is already built; only the tickets that need this answer are waiting.</p><div class="acts">${btn("decide", "Per API key", true, "Per API key")}${btn("decide", "Per IP address", false, "Per IP address")}</div></div>`,
+    approve: `<div class="ask"><div class="meta"><span class="kind risk">Approve</span><span>T4</span></div><h3>Change resources in a production cluster</h3><pre>$ kubectl --context prod-eu apply -f k8s/api.yaml</pre><p class="undo">Can be undone: re-apply the manifests as they were before.</p><div class="acts">${btn("approve", "Approve", true)}${btn("deny", "Deny")}</div></div>`,
+    land: `<div class="ask"><div class="meta"><span class="kind risk">Land</span><span>G1</span></div><h3>Land “Rate-limit the public API”?</h3><p>All four tickets are finished and merged into the goal's branch. Landing fast-forwards your base branch.</p><div class="acts">${btn("land", "Land it", true)}${btn("notyet", "Not yet")}</div></div>`,
+  };
+  const end = (text) => `<div class="ask clear"><p>${text}</p><div class="acts">${btn("reset", "Run the service again")}</div></div>`;
+
+  const acts = {
+    decide(text) {
+      docket("t2", "done", `Decided: ${text}.`);
+      docket("t3", "cooking", "Started the moment you answered.");
+      pass("Nothing needs you", quiet("A cook is working. Nothing needs you."));
+      later(() => {
+        docket("t3", "done", "Checked by the inspector, merged into the goal's branch.");
+        docket("t4", "cooking", "Staging first, on its own.");
+      });
+      later(() => {
+        docket("t4", "held", "Wants to change production.");
+        pass("1 needs you", ASK.approve);
+      }, 2);
+    },
+    approve() {
+      docket("t4", "cooking", "Running exactly the command you approved.");
+      pass("Nothing needs you", quiet("The cook was resumed with your approval."));
+      later(() => {
+        docket("t4", "done", "Rolled out. Recorded, with an undo.");
+        pass("1 needs you", ASK.land);
+      });
+    },
+    deny() {
+      docket("t4", "done", "Left production alone, as told. Staging is done.");
+      pass("1 needs you", ASK.land);
+    },
+    land() {
+      pass("The pass is clear", end("Landed on your base branch. It is recorded, so <code>oui undo</code> can put it back."));
+    },
+    notyet() {
+      pass("The pass is clear", end("Left on the goal's branch. <code>oui land G1</code> lands it when you are ready."));
+    },
+    reset() {
+      for (const [id, [state, note]] of Object.entries(START)) docket(id, state, note);
+      pass("1 needs you", ASK.decide);
+    },
+  };
+
+  $("asks").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-act]");
+    if (!b) return;
+    timers.forEach(clearTimeout);
+    timers = [];
+    acts[b.dataset.act](b.dataset.text);
+  });
+
+  $("copy").addEventListener("click", async () => {
+    const b = $("copy");
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy);
+      b.textContent = "Copied";
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents($("install"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      b.textContent = "Selected";
+    }
+    setTimeout(() => (b.textContent = "Copy"), 1600);
+  });
+})();
+</script>
+</body>
+</html>
