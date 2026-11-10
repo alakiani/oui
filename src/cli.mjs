@@ -475,8 +475,8 @@ const commands = {
   async msg(args) {
     const [to, ...text] = args;
     if (!to || !text.length) die('oui msg <T-id|sous|chef> "<text>"');
-    const r = await rpc("msg", { to, text: text.join(" ") });
-    say(`Sent to ${r.to}.`);
+    const r = await rpc("msg", { to, text: text.join(" "), ask: process.env.OUI_ASK || undefined });
+    say(r.ask ? `Sent as ${r.ask}. It will be read and passed on to whoever it concerns. Nobody is waiting on a reply, so carry on.` : `Sent to ${r.to}.`);
   },
 
   async propose(args, flags) {

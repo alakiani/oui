@@ -33,7 +33,7 @@ you ── goal ─▶ sous chef ── tickets, with needs ─▶ expediter ─
 | | What it is | What it does |
 |---|---|---|
 | **Chef** | You | Give goals, answer what only you can, approve what is risky |
-| **Sous chef** | A model, called for short judgement calls | Turns a goal into tickets; answers cooks' questions the goal already settles and passes the rest up, reworded |
+| **Sous chef** | A model, called for short judgement calls | Turns a goal into tickets; answers cooks' questions the goal already settles and passes the rest up, reworded; reads what cooks tell it and passes it on to whoever it concerns |
 | **Inspector** | A model, read-only | Checks each finished build ticket against its brief before it merges |
 | **Cook** | One Claude Code session per ticket, at its own station (a git worktree): a terminal in Herdr or tmux, or headless | Does the work, commits, reports |
 | **Expediter** | Plain code, no model | Fires tickets in order, delivers answers, runs checks, merges, lands |
@@ -49,7 +49,7 @@ Needs Node 20 or newer, git, and [Claude Code](https://code.claude.com) logged i
 git clone https://github.com/alakiani/oui.git
 cd oui
 npm link        # puts `oui` on your PATH
-npm test        # 50 tests; takes under a minute
+npm test        # 51 tests; takes under a minute
 ```
 
 There are no dependencies to install. New here? [Getting started](docs/getting-started.md) walks from the demo to your first real goal, then to Herdr.
@@ -116,6 +116,8 @@ oui undo X12                             # show the recipe;  --yes runs it
 `waiting` (something it needs is unfinished) → `next up` → `running` → `in review` (your project's checks, then the inspector, or [inspectors](#more-than-one-inspector)) → merged into the goal's branch → `done`. On the way it can be `at the pass` (an open question, access request or held command), `with sous chef` (a question the sous chef may be able to answer), or sent back to its cook with the reason.
 
 Finished tickets merge into one branch per goal, so later tickets start from everything before them. When a goal is finished you get one ask: land it. Landing is a fast-forward of your base branch (`landing: local`) or one pull request (`landing: pr`). A plan can also contain a `land` ticket in the middle, for work that must be on the base branch before a pipeline or rollout runs.
+
+Cooks do not talk to each other directly. A cook tells another ticket's cook something with `oui msg T4 "…"`, or tells the sous chef with `oui msg sous "…"`. A message to the sous chef, or to you, is read by a short sous chef call: it tells the cooks the message concerns, or passes it up to you when the plan should change or the decision is yours. The sender is not kept waiting. A message the sous chef does nothing with reaches the pass, so none is lost.
 
 A question for you can be a ticket too. A `decide` ticket has no cook: it goes to the pass as soon as what it needs is finished, without waiting for a free cook. Only the tickets that need its answer wait; everything else keeps cooking. Your answer finishes the ticket, and every cook in the goal that starts afterwards is told what you decided.
 
@@ -220,7 +222,7 @@ Oui Chef does not prescribe a way of working. The mechanics are code: order, the
 |---|---|
 | `sous.md` | The sous chef you talk to in `oui sous`: what it asks before planning, how much, and when it stops asking |
 | `tickets.md` | How tickets are cut and briefed. The sous chef and the planner behind `oui go` both follow it |
-| `roles.md` | The planner, the triage of cooks' questions and the inspector, one section each |
+| `roles.md` | The planner, the triage of cooks' questions, what becomes of a cook's message, and the inspector, one section each |
 | `cook.md` | What every cook is told |
 
 ```bash
@@ -268,7 +270,7 @@ Words in double braces, such as `{{detail}}` and `{{tickets}}`, are filled in by
 | `maxCooks` | `3` | Cooks running at once, across all projects |
 | `model`, `sousModel` | harness default | Model for cooks, and for the judgement calls: the planner, triage and the inspectors |
 | `effort`, `sousEffort` | harness default | How hard they think: `low`, `medium`, `high`, `xhigh` or `max` |
-| `calls.plan` / `calls.triage` / `calls.review` | `true` | `false` turns a judgement call off. An object tunes that one call: `{ "model": …, "effort": …, "timeoutMinutes": … }` |
+| `calls.plan` / `calls.triage` / `calls.review` / `calls.message` | `true` | `false` turns a judgement call off. An object tunes that one call: `{ "model": …, "effort": …, "timeoutMinutes": … }`. With `calls.message` off, a cook's message to the sous chef is only recorded |
 | `roleTimeoutMinutes` | `10` | A judgement call longer than this is stopped |
 | `maxAttempts` | `3` | Times a ticket is sent back before you are asked |
 | `turnTimeoutMinutes` | `120` | A cook's turn longer than this is stopped |
@@ -306,6 +308,7 @@ Verified, with real runs:
 - **Questions as tickets, and your own prompts**, on macOS. Automated: a `decide` ticket reaches the pass while every cook is busy, holds only the tickets that need it, and its answer is in the brief of the cook behind it; your own prompt files win over the built-in ones, one file or one role at a time; the pass refuses an agent that touches them. With real Claude Code, once each on a scratch repository: the planner turned "add rate limiting" into two tickets that started at once, two questions on the pass, and one last ticket waiting for both answers; it turned a small, clear goal into a single ticket with no question; and the sous chef, given a one-sentence goal, read the repository, asked one numbered round of three questions with its own answer to each, and planned nothing.
 
 - **Seeing the plan first, tuned judgement calls, more than one inspector**, on macOS. Automated: a plan waits on the pass, goes back with your words and starts on your go; a sous chef who runs out of time or writes no plan asks instead of guessing; an inspector of your own reads the work separately and sends it back; the effort you set reaches the agent's command line. With real Claude Code, once: at `medium` effort with the plan check on, the planner planned "add rate limiting" in one minute, and its plan waited on the pass with a note on how it cut the work and what it assumed. The same goal had taken 6.8 minutes at the agent's default effort, on an earlier and longer version of the ticket rules, so the two are not a like-for-like comparison.
+- **Messages that are acted on.** Automated: a cook's message to the sous chef is passed on to the cook it concerns and closed, one written to the chef is handed up reworded, and one the sous chef ignores still reaches the pass. With real Claude Code, once: a cook reported that a limit is read only at start-up; in 11 seconds the sous chef told the rollout ticket to restart the pods and the docs ticket to say so, closed the message, and did not involve the chef.
 
 Not verified:
 

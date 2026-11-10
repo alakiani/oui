@@ -280,7 +280,7 @@ function renderBar(b) {
 }
 
 // ---- the pass
-const KIND = { question: "Question", decision: "Decision", access: "Access", approval: "Approve", land: "Land", plan: "Plan", stuck: "Stuck" };
+const KIND = { question: "Question", decision: "Decision", access: "Access", approval: "Approve", land: "Land", plan: "Plan", message: "Message", stuck: "Stuck" };
 function renderAsk(a) {
   const input = h("input", { placeholder: a.kind === "access" ? "Tell the cook what you did…" : a.options.length ? "Or in your own words…" : "Your answer…", value: drafts[a.id] ?? "", "data-draft": a.id });
   input.addEventListener("input", () => (drafts[a.id] = input.value));

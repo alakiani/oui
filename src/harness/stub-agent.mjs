@@ -40,6 +40,7 @@ const DEFAULTS = {
   cook: [{ say: "Working on it." }, { run: 'oui note "working"' }, { sleep: 200 }, { run: 'oui done --summary "Did the work as briefed." --handoff "Nothing special."' }],
   triage: [{ run: "oui escalate {ask}" }],
   review: [{ run: 'oui verdict {ticket} pass --notes "Reads fine."' }],
+  message: [{ run: 'oui answer {ask} "Noted."' }],
   plan: [],
 };
 

@@ -27,7 +27,7 @@ All of these are shell commands.
 - `oui note "<one line>"`: where you are, at real milestones. This is the line the chef sees. Not every step.
 - `oui ask "<question>" --option "<A>" --option "<B>" --pick "<the one you would choose>" --why "<what depends on it>"`: a decision that is not yours. The sous chef answers what the goal and the chef's notes already settle, and passes the rest up.
 - `oui need "<what is missing>" --fix "<command or setting that grants it>"`: access only the chef can give.
-- `oui msg <T-id|sous> "<text>"`: tell another ticket's cook, or the sous chef, something they need to know.
+- `oui msg <T-id|sous> "<text>"`: tell another ticket's cook, or the sous chef, something they need to know. What you tell the sous chef is read and passed on to whoever it concerns. Nobody is waiting on a reply, so carry on.
 - `oui propose "<title>" --why "<reason>"`: work outside your ticket.
 - `oui done --summary "<what changed, 2-4 sentences>" --handoff "<what the next ticket needs to know>" --evidence "<how you checked it>"`: the work meets "Done when" and the checks pass. Commit first.
 - `oui fail "<why, and what you tried>"`: the ticket cannot be done as briefed.

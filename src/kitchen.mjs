@@ -336,9 +336,10 @@ export class Kitchen {
   // ---- asks: the only way anything reaches the chef
 
   askCreate(p, who) {
-    const taskId = who.role === "cook" ? who.task : p.task ?? who.task ?? null;
+    const kind = ["question", "decision", "access", "approval", "review", "land", "plan", "message", "stuck"].includes(p.kind) ? p.kind : "question";
+    // A message is about its sender's ticket without belonging to it: it never holds the sender up, and it outlives the ticket.
+    const taskId = kind === "message" ? null : who.role === "cook" ? who.task : p.task ?? who.task ?? null;
     const task = taskId ? this.task(taskId) : null;
-    const kind = ["question", "decision", "access", "approval", "review", "land", "plan", "stuck"].includes(p.kind) ? p.kind : "question";
     const title = clip(p.title, 240);
     if (!title) throw new Fail("An ask needs a question");
     const from = p.from ?? (who.role === "cook" ? `cook:${taskId}` : who.role);
@@ -349,6 +350,8 @@ export class Kitchen {
     const ask = {
       id: this.nextId("ask", "A"),
       task: taskId,
+      about: kind === "message" ? p.about ?? null : null, // the ticket a message came from
+      wanted: kind === "message" ? p.wanted ?? null : null, // and who it was written to: sous or chef
       goal: task?.goal ?? p.goal ?? null,
       from,
       to: p.to ?? (sousFirst ? "sous" : "chef"),
@@ -389,9 +392,16 @@ export class Kitchen {
     // An option the expediter offered, or the chef's own words ("*"), which go along as guidance.
     const action = ask.on?.[answer] ?? ask.on?.["*"];
     if (action) this.expo?.act(action, ask);
+    else if (ask.kind === "message") this.#reply(ask, who.role, answer);
     else this.#deliver(ask, { kind: "answer", by: who.role, question: ask.title, text: answer });
     this.changed();
     return ask;
+  }
+
+  // What became of a message goes back to whoever sent it, if they are still at their station.
+  #reply(ask, by, text) {
+    const t = ask.about ? this.state.tasks[ask.about] : null;
+    if (t && !["done", "cancelled", "failed"].includes(t.status)) t.inbox.push({ kind: "msg", from: by === "sous" ? "the sous chef" : "the chef", text: `About your message (“${clip(ask.title, 90)}”): ${text}` });
   }
 
   // The sous chef hands a question up, reworded so the chef can decide in one read.
@@ -466,7 +476,7 @@ export class Kitchen {
     return { ok: true };
   }
 
-  msg({ to, text }, who) {
+  msg({ to, text, ask: handling }, who) {
     const body = clip(text, 1200);
     if (!body) throw new Fail("A message needs some text");
     const from = who.role === "cook" ? `cook:${who.task}` : who.role;
@@ -479,7 +489,22 @@ export class Kitchen {
       target = `cook:${t.id}`;
       if (["done", "cancelled", "failed"].includes(t.status)) throw new Fail(`${t.id} is ${t.status}; nobody is there to read it. Tell the sous chef instead: oui msg sous "…"`);
       t.inbox.push({ kind: "msg", from, text: body });
+      // The sous chef passing a cook's message on: remembered, in case it then forgets to close the message.
+      const passed = who.role === "sous" && handling ? this.state.asks[handling] : null;
+      if (passed?.kind === "message" && passed.status === "open") passed.forwarded = [...new Set([...(passed.forwarded ?? []), t.id])];
     } else if (!["sous", "chef"].includes(target)) throw new Fail("Send to a ticket id (T4), sous, or chef");
+    else {
+      // Nobody stands by to read these, so each one is put in front of someone who will act on it.
+      if (who.role === "chef") throw new Fail('Nobody is standing by to read that. To tell a cook: oui msg T4 "…". For a lasting rule: oui remember "…". To change a goal: oui ticket add, oui refire or oui 86.');
+      const goal = mine?.goal ?? (this.state.goals[who.subject] ? who.subject : null);
+      const read = callSettings(this.config, "message").on;
+      // From a cook or an inspector, the sous chef reads it first: it is passed on, closed, or handed up. From the sous chef to the chef, it goes to the pass.
+      const to = who.role === "sous" ? (target === "chef" ? "chef" : null) : read ? "sous" : null;
+      if (to) {
+        const ask = this.askCreate({ kind: "message", about: who.task ?? null, goal, from, to, title: body, body: body.length > 240 ? body : "", wanted: target }, who);
+        return { ok: true, to: target, ask: ask.id };
+      }
+    }
     this.emit({ type: "msg", from, to: target, task: who.task ?? null, goal: who.task ? this.state.tasks[who.task]?.goal : null, text: body });
     this.changed();
     return { ok: true, to: target };

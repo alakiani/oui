@@ -142,13 +142,17 @@ export class Expediter {
       this.#planGoal(goal);
     }
 
-    // Questions the sous chef may be able to settle without the chef.
+    // Questions the sous chef may be able to settle without the chef, and messages for it to act on.
+    // Whatever the sous chef leaves open goes up to the chef, so nothing is dropped.
     for (const ask of kitchen.openAsks()) {
       if (ask.to !== "sous" || ask.triaged) continue;
       ask.triaged = true;
       dirty = true;
-      this.runRole("triage", { ask }).then(() => {
-        if (ask.status === "open" && ask.to === "sous") kitchen.askEscalate({ id: ask.id }, { role: "sous" });
+      this.runRole(ask.kind === "message" ? "message" : "triage", { ask }).then(() => {
+        if (ask.status !== "open" || ask.to !== "sous") return;
+        // A message the sous chef passed on but did not close is dealt with. The chef need not hear of it.
+        if (ask.forwarded?.length) kitchen.askAnswer({ id: ask.id, text: `Passed on to ${ask.forwarded.join(", ")}.` }, { role: "sous" });
+        else kitchen.askEscalate({ id: ask.id }, { role: "sous" });
       });
     }
 
@@ -799,7 +803,7 @@ export class Expediter {
     const { kitchen } = this;
     const s = kitchen.state;
     const role = kind === "review" ? "inspector" : "sous";
-    const task = ctx.task ?? (ctx.ask?.task ? s.tasks[ctx.ask.task] : null);
+    const task = ctx.task ?? s.tasks[ctx.ask?.task ?? ctx.ask?.about] ?? null;
     const project = s.projects[(task ?? ctx.goal)?.project];
     const cwd = task?.workdir && fs.existsSync(task.workdir) ? task.workdir : project?.path ?? home();
     // An inspector of the chef's own is its own call: its own settings, its own folder, its own name on the verdict.

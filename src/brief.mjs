@@ -15,7 +15,7 @@ import { P, ROOT } from "./paths.mjs";
 export const PROMPTS = {
   "sous.md": "the sous chef you talk to in `oui sous`: how a goal is talked through and planned",
   "tickets.md": "how tickets are cut and briefed, for the sous chef and the planner alike",
-  "roles.md": "the planner behind `oui go`, the triage of cooks' questions, and the inspector",
+  "roles.md": "the planner behind `oui go`, the triage of cooks' questions and messages, and the inspector",
   "cook.md": "what every cook is told",
 };
 
@@ -170,6 +170,27 @@ export function rolePrompt(kind, kitchen, ctx) {
     // A plan template of the chef's own may not have a place for it; what they said must still arrive.
     return `${fill(template, {
       feedback, detail: ctx.goal.detail, goal: ctx.goal.id, project: project.name, path: project.path, git: project.git ? ` (git, base branch \`${project.base}\`, finished goals land ${project.landing === "pr" ? "as a pull request" : "by local merge"})` : " (not a git repository)", preferences: prefs, tickets: read("tickets.md").trim() })}${template.includes("{{feedback}}") ? "" : feedback}`;
+  }
+  if (kind === "message") {
+    const a = ctx.ask;
+    const sender = a.about ? s.tasks[a.about] : null;
+    const about = s.goals[a.goal ?? sender?.goal] ?? null;
+    const who = String(a.from).startsWith("cook:") ? "The cook on" : a.from === "inspector" ? "The inspector of" : "Someone working on";
+    // The goal's tickets in a line each, so the sous chef can tell who else the message concerns.
+    const lines = about ? Object.values(s.tasks).filter((t) => t.goal === about.id && t.status !== "cancelled").map((t) => `- ${t.id} [${t.status === "todo" ? "not started" : t.status}${t.needs.length ? `, after ${t.needs.join(", ")}` : ""}] ${t.title}${t.id === sender?.id ? "   (the sender)" : ""}`) : [];
+    return fill(template, {
+      from: sender ? `${who} ticket ${sender.id} "${sender.title}"` : "Someone in the kitchen",
+      to: a.wanted === "chef" ? "the chef" : "you",
+      ask: a.id,
+      message: a.body || a.title,
+      goal: about?.id ?? "",
+      goalTitle: about?.title ?? "",
+      detail: about?.detail ?? "",
+      decisions: about ? decisions(s, about.id) : "",
+      preferences: prefs,
+      board: lines.join("\n") || "- (none)",
+      path: s.projects[sender?.project ?? about?.project]?.path ?? "",
+    });
   }
   const task = ctx.task ?? (ctx.ask?.task ? s.tasks[ctx.ask.task] : null);
   const goal = task ? s.goals[task.goal] : null;

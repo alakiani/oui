@@ -67,7 +67,7 @@ export const DEFAULT_CONFIG = {
   sousModel: null, // model for the sous chef's and inspectors' judgement calls
   sousEffort: null, // and how hard they think
   // Each judgement call is on (true), off (false), or tuned: { model, effort, timeoutMinutes }.
-  calls: { triage: true, review: true, plan: true },
+  calls: { triage: true, review: true, plan: true, message: true },
   maxAttempts: 3, // times a ticket may be sent back before the chef is asked
   maxNudges: 2, // times a cook that stopped without reporting is nudged
   turnTimeoutMinutes: 120,

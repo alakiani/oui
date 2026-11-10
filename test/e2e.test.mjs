@@ -32,6 +32,17 @@ script.tasks.picky = [{ run: 'oui ask "Which one?" --option "One" --option "Two"
 script.tasks.styled = [{ write: "notes.txt", content: "x\n" }, { run: 'git add -A && git commit -qm "Add notes"' }, { run: 'oui done --summary "Added the notes file."' }, { end: true }, { run: 'git mv notes.txt renamed.txt && git commit -qm "Rename"' }, { run: 'oui done --summary "Renamed as the house asks."' }];
 // An inspector of the chef's own. It looks at one thing only.
 script.roles["review: standards"] = [{ run: 'test -f renamed.txt && oui verdict {ticket} pass --notes "Named for what it holds." || oui verdict {ticket} changes --notes "Name the file after what it holds."' }];
+// A cook that tells the sous chef something another ticket needs to know, and one that writes to the chef. Both keep working.
+script.tasks.finder = [{ run: 'oui msg sous "Limits are read at boot, so the pods need a restart after the rollout."' }, { sleep: 3000 }, { run: 'oui done --summary "Found how the limits are loaded."' }];
+script.tasks.worrier = [{ run: 'oui msg chef "The rollout ticket looks unnecessary: staging already runs this image."' }, { sleep: 5000 }, { run: 'oui done --summary "Checked staging."' }];
+// The sous chef passes the first on to the cook it concerns, and hands the second up so the chef can decide in one read.
+script.roles["message:finder"] = [{ run: 'oui msg roller "Restart the pods after the rollout: limits are read at boot."' }, { run: 'oui answer {ask} "Told the rollout cook."' }];
+script.roles["message:worrier"] = [{ run: 'oui escalate {ask} --title "Drop the rollout ticket?" --body "Staging already runs this image. To drop it: oui 86 the rollout ticket." --option "Drop it" --option "Keep it" --pick "Keep it"' }];
+// A sous chef that passes a message on and forgets to close it, and one that does nothing with it at all.
+script.tasks.forwarder = [{ run: 'oui msg sous "The API key header is x-api-key, not Authorization."' }, { sleep: 3000 }, { run: 'oui done --summary "Checked the header."' }];
+script.tasks.shrugger = [{ run: 'oui msg sous "The old endpoint is still called by the mobile app."' }, { sleep: 3000 }, { run: 'oui done --summary "Checked the callers."' }];
+script.roles["message:forwarder"] = [{ run: 'oui msg listener "Use the x-api-key header, not Authorization."' }];
+script.roles["message:shrugger"] = [];
 // The sous chef planning a goal by itself: two tickets, and a note for the chef.
 const PLANNER = [{ run: `oui plan - <<'EOF'\n{ "goalId": "{goal}", "goal": { "title": "Two steps", "note": "Cut in two. Assumed nothing else changes." }, "tickets": [ { "key": "first", "kind": "scout", "title": "First step", "brief": "x" }, { "key": "second", "kind": "scout", "title": "Second step", "brief": "x", "needs": ["first"] } ] }\nEOF` }];
 
@@ -394,6 +405,49 @@ test("an inspector of the chef's own reads the work separately, and can send it 
   assert.deepEqual(Object.keys(kitchen.state.tasks[h.tasks[0].id].reviews), [""]);
   delete kitchen.config.calls["review: standards"];
   fs.rmSync(mine);
+});
+
+test("a message to the sous chef or the chef is read and acted on, not just filed", async () => {
+  const g = kitchen.plan({ goal: { title: "Word gets around", project: demo.repo }, tasks: [{ key: "finder", kind: "scout", title: "Find how limits load", brief: "x" }, { key: "roller", kind: "scout", title: "Roll it out", brief: "x", needs: ["finder"] }] }, who);
+  const [finder, roller] = g.tasks.map((t) => t.id);
+
+  // To the sous chef: it tells the cook the message concerns, closes it, and the sender hears what became of it.
+  const note = await until("the sous chef to deal with the message", () => Object.values(kitchen.state.asks).find((a) => a.kind === "message" && a.about === finder && a.status === "answered"));
+  assert.deepEqual([note.task, note.to, note.by, note.answer], [null, "sous", "sous", "Told the rollout cook."]);
+  assert.equal(state(finder), "running", "the cook was not held up by its own message");
+  assert.ok(kitchen.feed.some((e) => e.type === "msg" && e.from === "sous" && e.to === `cook:${roller}` && /Restart the pods/.test(e.text)));
+  await until("both tickets to finish", () => state(finder) === "done" && state(roller) === "done");
+  assert.match(fs.readFileSync(path.join(demo.home, "tickets", roller, "brief.md"), "utf8"), /## Waiting for you\n- Message from sous: Restart the pods after the rollout: limits are read at boot\./, "a cook that had not started gets it with its brief");
+  assert.match(fs.readFileSync(path.join(demo.home, "tickets", finder, "turn-1.jsonl"), "utf8"), /from the sous chef: About your message \(“Limits are read at boot[^”]*”\): Told the rollout cook\./, "the sender is told on its next step");
+
+  // To the chef: the sous chef hands it up, reworded, and the chef's word goes back to the cook who wrote.
+  const h = kitchen.plan({ goal: { title: "A word for the chef", project: demo.repo }, tasks: [{ key: "worrier", kind: "scout", title: "Check staging", brief: "x" }] }, who);
+  const worrier = h.tasks[0].id;
+  const up = await until("the message to reach the chef", () => board().asks.find((a) => a.kind === "message" && a.task === worrier));
+  assert.deepEqual([up.title, up.options, up.pick, up.viaSous], ["Drop the rollout ticket?", ["Drop it", "Keep it"], "Keep it", true]);
+  assert.equal(state(worrier), "running");
+  kitchen.askAnswer({ id: up.id, text: "Keep it" }, who);
+  assert.ok(kitchen.state.tasks[worrier].inbox.some((m) => m.kind === "msg" && m.from === "the chef" && /^About your message .*: Keep it$/.test(m.text)));
+  await until("the cook to finish", () => state(worrier) === "done");
+
+  // A sous chef that passes a message on but forgets to close it has still dealt with it. One that does nothing leaves it for the chef.
+  const k = kitchen.plan({ goal: { title: "Loose ends", project: demo.repo }, tasks: [{ key: "forwarder", kind: "scout", title: "Check the header", brief: "x" }, { key: "shrugger", kind: "scout", title: "Check the callers", brief: "x" }, { key: "listener", kind: "scout", title: "Use the header", brief: "x", needs: ["forwarder"] }] }, who);
+  const [forwarder, shrugger, listener] = k.tasks.map((t) => t.id);
+  const passed = await until("the forwarded message to be closed", () => Object.values(kitchen.state.asks).find((a) => a.kind === "message" && a.about === forwarder && a.status === "answered"));
+  assert.deepEqual([passed.by, passed.answer], ["sous", `Passed on to ${listener}.`]);
+  const left = await until("the ignored message to reach the chef", () => board().asks.find((a) => a.kind === "message" && a.task === shrugger));
+  assert.deepEqual([left.title, left.viaSous], ["The old endpoint is still called by the mobile app.", true]);
+  kitchen.askAnswer({ id: left.id, text: "Leave it; the app is being retired." }, who);
+  await until("the three tickets to finish", () => [forwarder, shrugger, listener].every((id) => state(id) === "done"));
+
+  // The chef has no sous chef standing by, and is told so. With the call switched off, a message is only recorded, as before.
+  assert.throws(() => kitchen.msg({ to: "sous", text: "Hello?" }, who), /Nobody is standing by to read that/);
+  kitchen.config.calls.message = false;
+  const asks = Object.keys(kitchen.state.asks).length;
+  assert.deepEqual(kitchen.msg({ to: "sous", text: "For the record." }, { role: "cook", task: worrier }), { ok: true, to: "sous" });
+  assert.equal(Object.keys(kitchen.state.asks).length, asks);
+  assert.ok(kitchen.feed.some((e) => e.type === "msg" && e.to === "sous" && e.text === "For the record."));
+  kitchen.config.calls.message = true;
 });
 
 test("the chef's own prompts are listed, copied and then used", async () => {

@@ -86,8 +86,8 @@ export function buildBoard(kitchen, running = new Map()) {
     .map((a) => ({
       id: a.id,
       kind: a.kind,
-      task: a.task,
-      taskTitle: a.task ? byId.get(a.task)?.title ?? null : null,
+      task: a.task ?? a.about ?? null, // a message names the ticket it came from
+      taskTitle: byId.get(a.task ?? a.about)?.title ?? null,
       goal: a.goal,
       goalTitle: a.goal ? s.goals[a.goal]?.title ?? null : null,
       from: a.from,

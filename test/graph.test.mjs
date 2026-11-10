@@ -218,6 +218,20 @@ test("a section headed review: <name> is one more inspector, and a plan sent bac
   goal.feedback = [{ note: "Split the API work in two.", plan: ["One", "Deploy (ops)"] }, { note: "Start with the schema.", plan: [] }];
   assert.equal(rolePrompt("plan", kitchen, { goal }), "House planner for G1: Do it.\nThis goal has been planned before and the chef sent it back. What they said comes first:\n- The plan had: One; Deploy (ops)\n  The chef said: Split the API work in two.\n- The chef said: Start with the schema.\n");
   fs.rmSync(ownPrompt("roles.md"));
+
+  // A cook's message to the sous chef becomes something to act on, with the goal's tickets beside it.
+  kitchen.plan({ goalId: goal.id, tickets: [{ key: "b", title: "Two", brief: "Build two.", needs: [a.id] }] }, { role: "chef" });
+  a.status = "running";
+  const sent = kitchen.msg({ to: "chef", text: "The schema has no index on orders.created_at." }, { role: "cook", task: a.id });
+  const note = kitchen.state.asks[sent.ask];
+  assert.deepEqual([note.kind, note.task, note.about, note.to, note.wanted], ["message", null, a.id, "sous", "chef"]);
+  assert.equal(kitchen.openAsks(a.id).length, 0, "the message does not hold its sender");
+  const told = rolePrompt("message", kitchen, { ask: note });
+  assert.ok(!/\{\{|\}\}/.test(told));
+  assert.match(told, /The cook on ticket T1 "One" has sent the chef a message\./);
+  assert.match(told, /The message \(A1\):\n\nThe schema has no index on orders\.created_at\./);
+  assert.match(told, /- T1 \[running\] One   \(the sender\)\n- T2 \[not started, after T1\] Two/);
+  assert.match(told, /`oui answer A1 "<one line>"`/);
   const builtIn = rolePrompt("plan", kitchen, { goal });
   assert.ok(!/\{\{|\}\}/.test(builtIn));
   assert.match(builtIn, /\nThis goal has been planned before and the chef sent it back\. What they said comes first:\n- The plan had: One; Deploy \(ops\)\n  The chef said: Split the API work in two\.\n- The chef said: Start with the schema\.\n\nDo this:/);
