@@ -43,7 +43,7 @@ Needs Node 20 or newer, git, and [Claude Code](https://code.claude.com) logged i
 git clone https://github.com/alakiani/oui.git
 cd oui
 npm link        # puts `oui` on your PATH
-npm test        # 40 tests; takes under a minute
+npm test        # 44 tests; takes under a minute
 ```
 
 There are no dependencies to install. New here? [Getting started](docs/getting-started.md) walks from the demo to your first real goal, then to Herdr.
@@ -64,13 +64,15 @@ oui project add ~/code/api               # register a repository
 oui go "Add rate limiting to the public API and roll it out to staging"
 ```
 
-`oui go` hands the goal to the sous chef, who reads the repository, writes the tickets and their order, and puts into the first ticket that needs it anything only you can provide. Cooks start as soon as the plan is in.
+`oui go` hands the goal to the sous chef, who reads the repository and writes the tickets and their order. Anything only you can decide becomes a question on the pass straight away: the tickets that need the answer wait for it, and the rest start as soon as the plan is in.
 
 To talk a goal through first, with you in the loop:
 
 ```bash
 oui sous                                 # an interactive Claude Code session that knows how to plan
 ```
+
+By default the sous chef reads the repository first, then asks you in rounds: every question it can ask at that point, numbered, each with the answer it would give, so "yes to all" is a valid reply. Say "cook it" at any time and it decides the rest and tells you what it assumed. How much it asks, and how, is yours to change: see [Make it yours](#make-it-yours).
 
 Then decide, from the board or the terminal:
 
@@ -100,6 +102,8 @@ oui undo X12                             # show the recipe;  --yes runs it
 
 Finished tickets merge into one branch per goal, so later tickets start from everything before them. When a goal is finished you get one ask: land it. Landing is a fast-forward of your base branch (`landing: local`) or one pull request (`landing: pr`). A plan can also contain a `land` ticket in the middle, for work that must be on the base branch before a pipeline or rollout runs.
 
+A question for you can be a ticket too. A `decide` ticket has no cook: it goes to the pass as soon as what it needs is finished, without waiting for a free cook. Only the tickets that need its answer wait; everything else keeps cooking. Your answer finishes the ticket, and every cook in the goal that starts afterwards is told what you decided.
+
 ### Plans
 
 A plan is a goal and tickets with `needs`. The sous chef writes them; you can too:
@@ -109,14 +113,16 @@ oui plan - <<'EOF'
 { "goal": { "title": "Rate-limit the public API", "detail": "…", "project": "api" },
   "tickets": [
     { "key": "limiter", "title": "Token-bucket middleware", "brief": "…", "accept": ["unit tests cover refill and 429"] },
-    { "key": "wire",    "title": "Apply it to /v1 routes", "needs": ["limiter"], "brief": "…" },
+    { "key": "keyed",   "kind": "decide", "title": "Count limits per API key or per IP?", "brief": "It sets what anonymous callers get.",
+      "options": ["Per API key", "Per IP"], "pick": "Per API key" },
+    { "key": "wire",    "title": "Apply it to /v1 routes", "needs": ["limiter", "keyed"], "brief": "…" },
     { "key": "land",    "kind": "land", "title": "Land before deploying", "needs": ["wire"] },
     { "key": "rollout", "kind": "ops",  "title": "Deploy to staging and verify", "needs": ["land"], "brief": "…" }
   ] }
 EOF
 ```
 
-`kind` is `build` (changes code), `ops` (acts on clusters, pipelines, deploys), `scout` (investigates and reports) or `land`.
+`kind` is `build` (changes code), `ops` (acts on clusters, pipelines, deploys), `scout` (investigates and reports), `decide` (a question for you, with `options` and the plan's `pick`) or `land`. Here the limiter is built while the question is open, and only `wire` waits for your answer.
 
 ### Kitchen calls
 
@@ -191,6 +197,35 @@ The mod has not been run inside Herdr yet; see "What was and was not verified" b
 
 The same board is always available in a browser at the address `oui up` prints.
 
+## Make it yours
+
+Oui Chef does not prescribe a way of working. The mechanics are code: order, the pass, checks, merging. How a goal is talked through, how tickets are cut and what a reviewer looks for are words in four plain files. They are a starting point that works, and they are meant to be changed.
+
+| File | What it steers |
+|---|---|
+| `sous.md` | The sous chef you talk to in `oui sous`: what it asks before planning, how much, and when it stops asking |
+| `tickets.md` | How tickets are cut and briefed. The sous chef and the planner behind `oui go` both follow it |
+| `roles.md` | The planner, the triage of cooks' questions and the inspector, one section each |
+| `cook.md` | What every cook is told |
+
+```bash
+oui prompts                 # each file, what it steers, and which copy is in use
+oui prompts copy tickets    # start your own copy in ~/.ouichef/prompts
+```
+
+Your copy wins over the built-in one, and an edit is used from the next conversation, plan, review or cook on, with no restart. In your `roles.md`, keep only the sections you change; the others stay built-in. Delete a file to go back to the default.
+
+Some ways to run a kitchen:
+
+- **No questions.** In `sous.md`, have the sous chef decide everything itself and list what it assumed.
+- **A long talk before every goal.** Have it keep asking until you say to cook.
+- **House rules for tickets** in `tickets.md`: one ticket per pull request, a failing test first, a design note before any code.
+- **A stricter inspector.** Add your standards to the `review` section of `roles.md`.
+
+For one lasting preference you do not need a file: `oui remember "skip the questions on small goals"` reaches the sous chef, the planner and every cook.
+
+Words in double braces, such as `{{detail}}` and `{{tickets}}`, are filled in by Oui Chef; keep the ones you want. Agents cannot rewrite what they are told: the pass refuses any attempt to touch your copies.
+
 ## Configuration
 
 `~/.ouichef/config.json` (all optional):
@@ -208,7 +243,7 @@ The same board is always available in a browser at the address `oui up` prints.
 
 Per project (`oui project add <path> --landing local|pr --merge ask|auto --verify "npm test"`): how goals land, whether landing asks you, and checks every ticket must pass.
 
-`oui remember "always squash-merge"` saves a standing preference. Every cook and every plan gets it.
+`oui remember "always squash-merge"` saves a standing preference. Every cook, every plan and the sous chef you talk to get it.
 
 Set `OUI_HOME` to keep a second, separate kitchen.
 
@@ -220,12 +255,14 @@ Verified, with real runs:
 - **Cooks in terminals**, with a real Claude Code cook in a tmux window: the terminal was opened, the trust prompt answered, the production command held at the pass, the approval typed into the terminal, the report filed, and the inspector's send-back typed in.
 - **38 automated tests**, run on Linux (including with the temp folder behind a symlink, as it is on macOS): the dependency graph; the pass against about 200 commands and tool calls; every prompt rendered with nothing left blank; and the full loop with scripted cooks through the real hooks, CLI and git, including denial, a cook trying to approve itself, a cook that goes silent, failed checks, mid-plan landing, undo, the daemon's access rules, and both session backends (tmux for real, Herdr against a stand-in `hc` that records every call).
 - **The web board** in Chromium: dark, light and phone width; answering, approving and firing a goal from the page.
+- **Questions as tickets, and your own prompts**, on macOS. Automated: a `decide` ticket reaches the pass while every cook is busy, holds only the tickets that need it, and its answer is in the brief of the cook behind it; your own prompt files win over the built-in ones, one file or one role at a time; the pass refuses an agent that touches them. With real Claude Code, once each on a scratch repository: the planner turned "add rate limiting" into two tickets that started at once, two questions on the pass, and one last ticket waiting for both answers; it turned a small, clear goal into a single ticket with no question; and the sous chef, given a one-sentence goal, read the repository, asked one numbered round of three questions with its own answer to each, and planned nothing.
 
 Not verified:
 
 - **Anything inside real Herdr.** Herdr and herdr-core could not be run where this was built. The `herdr` sessions backend uses only documented `hc` commands (`run`, `send`, `get`, `kill`, `rm`, `read`, `keys`, `interrupt`), and is tested against a stand-in. Whether a goal's cooks land in one space as named tabs exactly as intended is unconfirmed. The mod is written against Herdr's published guide and type file and tested with Herdr's modules replaced by stand-ins; how Herdr draws it is unconfirmed.
 - **Real clusters and forges.** `kubectl`, `helm` and `gh` were stand-ins. The checkpoint and undo commands are the documented ones; they have not been run against a live cluster.
-- **`landing: pr`** (push and `gh pr create`), **`oui sous`** and **`oui takeover`** (interactive sessions) were not exercised end to end.
+- **`landing: pr`** (push and `gh pr create`), **`oui sous`** and **`oui takeover`** (interactive sessions) were not exercised end to end. Of a conversation with the sous chef, only its first reply was seen.
+- **A real cook working from a decision.** The tests show the answer in the cook's brief; no real cook has built on one yet. The `decide` ticket on the web board and in the Herdr panel was not looked at.
 - **Other agent CLIs.** Cooks are Claude Code. `src/harness/` is the one place to add another.
 
 ## Layout
@@ -239,13 +276,13 @@ src/sessions/              where cooks run: herdr-core, tmux (headless needs non
 src/harness/               Claude Code as cook; scripted stand-ins for tests and the demo
 src/server.mjs             the loopback API
 src/board.mjs              the snapshot both boards draw
-prompts/                   what cooks, the sous chef and the inspector are told
+prompts/                   what cooks, the sous chef and the inspector are told (the built-in copies)
 web/index.html             the board in a browser
 herdr/ouichef/             the Herdr mod and its recipe
 test/                      npm test
 ```
 
-State is in `~/.ouichef`: `state.json`, `events.jsonl` (who said what), `ledger.jsonl` (what was changed, with undo), `tickets/<id>/` (brief, report, activity, checkpoints).
+State is in `~/.ouichef`: `state.json`, `events.jsonl` (who said what), `ledger.jsonl` (what was changed, with undo), `tickets/<id>/` (brief, report, activity, checkpoints), and `prompts/` (your own copies of what agents are told, if you made any).
 
 ## Credits
 

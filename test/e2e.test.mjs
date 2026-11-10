@@ -220,6 +220,74 @@ test("a land step mid-plan puts the work on the base branch before what follows"
   fs.writeFileSync(mine, before);
 });
 
+test("a question in the plan reaches the pass at once and holds only the tickets that need its answer", async () => {
+  // Every cook is busy: a question needs none, so it must not wait for one.
+  const max = kitchen.config.maxCooks;
+  kitchen.config.maxCooks = 0;
+  const g = kitchen.plan(
+    {
+      goal: { title: "Ask first", project: demo.repo },
+      tasks: [
+        { key: "free", kind: "scout", title: "Look around", brief: "x" },
+        { key: "which", kind: "decide", title: "Count limits per key or per IP?", brief: "It sets the bucket key.", options: ["Per key", "Per IP"], pick: "Per key" },
+        { key: "after", kind: "scout", title: "Use the answer", brief: "x", needs: ["which"] },
+      ],
+    },
+    who,
+  );
+  const [free, which, after] = g.tasks.map((t) => t.id);
+  const ask = await until("the question to reach the pass", () => askFor(which, "decision"));
+  assert.deepEqual([ask.title, ask.body, ask.options, ask.pick], ["Count limits per key or per IP?", "It sets the bucket key.", ["Per key", "Per IP"], "Per key"]);
+  assert.equal(ask.holds, 1, "the one ticket behind it; the question itself is not work");
+  assert.equal(state(which), "needs_you");
+  assert.equal(board().tasks.find((t) => t.id === which).line, "your call; the plan would pick: Per key");
+  assert.equal(state(free), "ready", "no cook was free, and the question did not need one");
+
+  // The rest of the plan cooks while the question is open.
+  kitchen.config.maxCooks = max;
+  expo.kick();
+  await until("the independent ticket to finish meanwhile", () => state(free) === "done");
+  assert.equal(state(after), "waiting");
+  assert.equal(state(which), "needs_you");
+
+  // It is a question, not an approval.
+  assert.throws(() => kitchen.askDeny({ id: ask.id }, who), /is a question: answer it/);
+  assert.throws(() => kitchen.askApprove({ id: ask.id }, who), /is a question: answer it instead/);
+
+  // The answer finishes the ticket, and the cook behind it is told what was decided.
+  const res = await oui("answer", ask.id, "2");
+  assert.equal(res.code, 0, res.out);
+  assert.equal(state(which), "done");
+  assert.equal(kitchen.state.tasks[which].decision, "Per IP");
+  await until("the ticket behind it to run", () => state(after) === "done");
+  const brief = fs.readFileSync(path.join(demo.home, "tickets", after, "brief.md"), "utf8");
+  assert.match(brief, /## Decisions for this goal\n- Count limits per key or per IP\? → Per IP/);
+  assert.match((await oui("show", which)).out, /Options: 1\) Per key {3}2\) Per IP\nThe plan would pick: Per key[\s\S]*Report: Decided: Per IP/);
+  await until("the goal to close", () => kitchen.state.goals[g.goal].status === "done");
+
+  // A question can be added to a goal later, from the terminal.
+  const added = await oui("ticket", "add", "--goal", g.goal, "--kind", "decide", "--title", "Ship behind a flag?", "--option", "Yes", "--option", "No", "--pick", "Yes");
+  assert.equal(added.code, 0, added.out);
+  const later = await until("the added question to reach the pass", () => board().asks.find((a) => a.title === "Ship behind a flag?"));
+  assert.deepEqual([later.kind, later.options, later.pick], ["decision", ["Yes", "No"], "Yes"]);
+  kitchen.askAnswer({ id: later.id, text: "Only for the first week" }, who);
+  assert.equal(kitchen.state.tasks[later.task].decision, "Only for the first week", "the chef's own words are an answer too");
+});
+
+test("the chef's own prompts are listed, copied and then used", async () => {
+  const list = await oui("prompts");
+  assert.equal(list.code, 0, list.out);
+  for (const name of ["sous.md", "tickets.md", "roles.md", "cook.md"]) assert.match(list.out, new RegExp(`${name.replace(".", "\\.")}\\s+built-in`));
+  const copied = await oui("prompts", "copy", "tickets");
+  assert.equal(copied.code, 0, copied.out);
+  const mine = path.join(demo.home, "prompts", "tickets.md");
+  assert.equal(fs.readFileSync(mine, "utf8"), fs.readFileSync(fileURLToPath(new URL("../prompts/tickets.md", import.meta.url)), "utf8"));
+  assert.match((await oui("prompts")).out, /tickets\.md\s+yours/);
+  assert.match((await oui("prompts", "copy", "tickets")).out, /You already have your own tickets\.md/);
+  assert.notEqual((await oui("prompts", "copy", "nope")).code, 0);
+  fs.rmSync(mine);
+});
+
 test("the chef's token is needed to decide; an agent's token is not enough", async () => {
   const url = `http://127.0.0.1:${kitchen.port}`;
   const call = (method, params, token) => fetch(`${url}/api/rpc`, { method: "POST", headers: { "content-type": "application/json", "x-oui-token": token ?? "" }, body: JSON.stringify({ method, params }) }).then((r) => r.status);

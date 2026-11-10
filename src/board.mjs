@@ -9,6 +9,8 @@ const REVIEW_STAGE = { verify: "running the checks", review: "inspector is revie
 
 function line(t, state, byId, open) {
   if (state === "running") return t.note ?? t.lastTool?.detail ?? "starting…";
+  // A question's title is the question itself, so its line says what is being waited for.
+  if (state === "needs_you" && t.kind === "decide") return `your call${t.pick ? `; the plan would pick: ${t.pick}` : ""}`;
   if (state === "needs_you") return open.find((a) => a.task === t.id && a.to === "chef")?.title ?? "waiting for you";
   if (state === "with_sous") return `sous chef is answering: ${open.find((a) => a.task === t.id)?.title ?? "a question"}`;
   if (state === "waiting") return `after ${unmetNeeds(t, byId).join(", ")}`;
@@ -97,7 +99,8 @@ export function buildBoard(kitchen, running = new Map()) {
       undo: a.undo,
       viaSous: Boolean(a.escalatedBy),
       createdAt: a.createdAt,
-      holds: heldUpBy(a.task, tasks, byId), // tickets that cannot move until this is answered
+      // Tickets that cannot move until this is answered. A question in the plan is not work itself, so it does not count.
+      holds: heldUpBy(a.task, tasks, byId) - (byId.get(a.task)?.kind === "decide" ? 1 : 0),
     }))
     .sort((a, b) => b.holds - a.holds || a.createdAt - b.createdAt);
 

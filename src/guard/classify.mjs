@@ -660,9 +660,10 @@ for (const p of ["mkfs.ext4", "mkfs.xfs", "mkfs.vfat", "mkfs.btrfs"]) PROGRAMS[p
 // ---- Oui Chef's own controls
 
 // Oui Chef's own control files, relative to its home: the chef's token, the
-// policy, the state, and the hook settings that keep the guard in place. Worktrees
-// also live under the home, so this names exact files rather than anything "*.json".
-const CONTROL = String.raw`(?:daemon\.json|policy\.json|state\.json|config\.json|ledger\.jsonl|events\.jsonl|bin/oui|(?:tickets|roles)/[^/\s'"]+/settings\.json)`;
+// policy, the state, the hook settings that keep the guard in place, and the chef's
+// own prompts, which are what every agent is told. Worktrees also live under the
+// home, so this names exact files rather than anything "*.json".
+const CONTROL = String.raw`(?:daemon\.json|policy\.json|state\.json|config\.json|ledger\.jsonl|events\.jsonl|bin/oui|(?:tickets|roles)/[^/\s'"]+/settings\.json|prompts/[^/\s'"]+)`;
 const CONTROL_REL = new RegExp(`^${CONTROL}$`);
 const CONTROL_BARE = /(^|[\s'"=])(daemon\.json|policy\.json|state\.json|ledger\.jsonl)(?=$|[\s'";|&)])/;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -681,6 +682,7 @@ function tamper(text, ctx) {
   const homes = [...(ctx.home ? [...new Set([path.resolve(ctx.home), real(ctx.home)])].map(escapeRe) : []), String.raw`\$\{?OUI_HOME\}?`, String.raw`(?:~|\$\{?HOME\}?)/\.ouichef`].join("|");
   if (new RegExp(`(?:${homes})/+${CONTROL}(?=$|[\\s'";|&)<>])`).test(text)) return deny("touches Oui Chef's control files");
   if (new RegExp(`\\b(?:cd|pushd)\\s+["']?(?:${homes})/?["']?(?=$|[\\s;&|])`).test(text) && CONTROL_BARE.test(text)) return deny("touches Oui Chef's control files");
+  if (new RegExp(`\\b(?:cd|pushd)\\s+["']?(?:${homes})/+prompts(?=$|[/\\s'";&|])`).test(text)) return deny("goes into the folder that holds what every agent is told");
   if (ctx.port && new RegExp(`(127\\.0\\.0\\.1|localhost|\\[::1\\]|0\\.0\\.0\\.0):${ctx.port}\\b`).test(text)) return deny("talks to the Oui Chef daemon directly instead of through oui");
   if (/\bOUI_(TOKEN|ROLE|TASK|HOME|RUN|ROOTS|PROTECTED|PORT)\s*=|\bunset\s+OUI_|\bexport\s+OUI_/.test(text)) return deny("changes the identity Oui Chef gave this agent");
   return null;

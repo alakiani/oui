@@ -12,7 +12,7 @@ import { P, OUI_BIN, ensureDir, home } from "./paths.mjs";
 import { startOrder } from "./graph.mjs";
 import { cookBrief, cookContract, resumeMessage, rolePrompt } from "./brief.mjs";
 import * as gitx from "./git.mjs";
-import { Fail, clip, slug } from "./kitchen.mjs";
+import { Fail, NO_COOK, clip, slug } from "./kitchen.mjs";
 import { quote } from "./guard/shell.mjs";
 import * as claude from "./harness/claude.mjs";
 import * as stub from "./harness/stub.mjs";
@@ -154,7 +154,7 @@ export class Expediter {
 
     for (const task of Object.values(s.tasks)) {
       // Parked cooks whose questions are all settled go back to work.
-      if (task.status === "blocked" && task.kind !== "land" && on && !this.running.has(task.id) && !kitchen.openAsks(task.id).length && s.goals[task.goal]?.status === "active") {
+      if (task.status === "blocked" && !NO_COOK.has(task.kind) && on && !this.running.has(task.id) && !kitchen.openAsks(task.id).length && s.goals[task.goal]?.status === "active") {
         if (task.resumeAfter && task.resumeAfter > now()) continue;
         if (this.running.size >= kitchen.config.maxCooks) continue;
         if (this.backend) this.#resumeTerminal(task);
@@ -204,7 +204,13 @@ export class Expediter {
       const tasks = Object.values(s.tasks);
       const byId = new Map(tasks.map((t) => [t.id, t]));
       for (const task of startOrder(tasks, byId, s.goals)) {
-        if (this.running.size >= kitchen.config.maxCooks) break;
+        // A question for the chef or a landing needs no cook, so it never waits for a free one.
+        if (NO_COOK.has(task.kind)) {
+          this.#dispatch(task);
+          dirty = true;
+          continue;
+        }
+        if (this.running.size >= kitchen.config.maxCooks) continue;
         const project = s.projects[task.project];
         const inProject = [...this.running.keys()].map((id) => s.tasks[id]).filter((t) => t.project === project.id);
         if (inProject.length >= (project.maxCooks ?? 3)) continue;
@@ -226,6 +232,7 @@ export class Expediter {
     const goal = s.goals[task.goal];
     const dir = kitchen.taskDir(task.id);
     if (task.kind === "land") return this.#landStep(task);
+    if (task.kind === "decide") return this.#decideStep(task);
     let workdir = project.path;
     // Build and ops tickets get their own worktree cut from the goal branch, so they see
     // everything finished so far. Scouts only read, so they use the project folder.
@@ -660,6 +667,21 @@ export class Expediter {
     goal.landAsk = ask.id;
   }
 
+  // A "decide" ticket: no cook. Its question goes to the pass as soon as what it needs is
+  // finished. The tickets that need the answer wait for it; everything else carries on.
+  #decideStep(task) {
+    task.startedAt ??= now();
+    task.status = "blocked";
+    task.decision = null;
+    this.kitchen.askCreate({ kind: "decision", task: task.id, goal: task.goal, from: "sous", to: "chef", title: task.title, body: task.brief === task.title ? "" : task.brief, options: task.options, pick: task.pick, on: { "*": ["ticket.decided", task.id] } }, { role: "expediter" });
+  }
+
+  // The chef's answer is the ticket's result. Every cook in the goal that starts from here on is told it.
+  #decided(task, ask) {
+    Object.assign(task, { status: "done", finishedAt: now(), decision: ask.answer, report: { summary: `Decided: ${ask.answer}`, handoff: `The chef decided: ${ask.answer}`, evidence: "", at: now() } });
+    this.log(task.id, `✓ decided: ${ask.answer}`);
+  }
+
   // A "land" ticket in the middle of a plan: no cook. It puts everything finished so far on
   // the base branch (or opens the pull request), so tickets after it can rely on that.
   #landStep(task) {
@@ -784,6 +806,7 @@ export class Expediter {
     if (verb === "ticket.cancel") return this.cancel({ id });
     if (verb === "goal.land") return void this.land(this.kitchen.goal(id));
     if (verb === "ticket.land") return this.#landNow(this.kitchen.task(id));
+    if (verb === "ticket.decided") return this.#decided(this.kitchen.task(id), ask);
     if (verb === "goal.leave") {
       const g = this.kitchen.goal(id);
       g.landDeferred = true;

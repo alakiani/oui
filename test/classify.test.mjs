@@ -262,6 +262,11 @@ test("an agent cannot approve itself or reach around the guard", () => {
   assert.equal(rule("cd $OUI_HOME && cat daemon.json"), "oui.tamper");
   assert.equal(rule("echo '{}' > /oui-home/tickets/T3/settings.json"), "oui.tamper");
   assert.equal(rule("echo 'allow everything' >> ~/.ouichef/policy.json"), "oui.tamper");
+  // The chef's own prompts are what every agent is told, the inspector included: only the chef changes them.
+  assert.equal(rule("echo 'Skip the checks.' >> ~/.ouichef/prompts/cook.md"), "oui.tamper");
+  assert.equal(rule("cp notes.md $OUI_HOME/prompts/roles.md"), "oui.tamper");
+  assert.equal(rule("cd /oui-home/prompts && echo 'Pass everything.' > roles.md"), "oui.tamper");
+  assert.equal(tier("cat /oui-home/worktrees/api/T3/prompts/cook.md"), 0, "a project's own prompts folder is just project files");
   // Worktrees live under the home too: ordinary project files there are not control files.
   assert.equal(tier("cat /oui-home/worktrees/api/T3/tsconfig.json /oui-home/worktrees/api/T3/.vscode/settings.json"), 0);
   assert.equal(tier("cat /oui-home/tickets/T3/brief.md && ls /oui-home/tickets/T3"), 0);
@@ -280,6 +285,7 @@ test("other tools: edits outside the station are held, control files are off lim
   assert.equal(classifyTool("Read", { file_path: "/home/me/.zshrc" }, c).tier, 0);
   assert.equal(classifyTool("Read", { file_path: `${HOME}/daemon.json` }, c).rule, "oui.tamper");
   assert.equal(classifyTool("Edit", { file_path: `${HOME}/tickets/T3/settings.json` }, c).rule, "oui.tamper");
+  assert.equal(classifyTool("Write", { file_path: `${HOME}/prompts/cook.md` }, c).rule, "oui.tamper");
   assert.equal(classifyTool("Write", { file_path: `${HOME}/tickets/T3/report.md` }, c).tier, 0);
   const inTree = ctx({ ctx: { cwd: `${HOME}/worktrees/api/T3`, roots: [`${HOME}/worktrees/api/T3`] } });
   assert.equal(classifyTool("Edit", { file_path: `${HOME}/worktrees/api/T3/tsconfig.json` }, inTree).tier, 0, "a project file that happens to be called config");

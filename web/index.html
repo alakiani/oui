@@ -484,6 +484,7 @@ async function drawDrawer() {
         ),
         t.session ? h("p", { style: { marginTop: "10px", fontSize: "12.5px" } }, card?.terminal ? `Running in a ${card.terminal.backend} terminal. Step in: ` : "Step into its conversation: ", h("code", {}, `oui takeover ${t.id}`)) : null,
         h("h4", {}, "Brief"), h("p", {}, t.brief),
+        t.options?.length ? [h("h4", {}, "Options"), h("ul", {}, t.options.map((o) => h("li", {}, o === t.pick ? `${o} (the plan's pick)` : o)))] : null,
         t.accept?.length ? [h("h4", {}, "Done when"), h("ul", {}, t.accept.map((a) => h("li", {}, a)))] : null,
         t.report ? [h("h4", {}, "Report"), h("p", {}, t.report.summary), t.report.handoff ? h("p", {}, h("b", {}, "For the next ticket: "), t.report.handoff) : null, t.report.evidence ? h("p", {}, h("b", {}, "Evidence: "), t.report.evidence) : null] : null,
         t.review ? [h("h4", {}, `Review · ${t.review.verdict === "pass" ? "passed" : "changes wanted"}`), h("p", {}, t.review.notes || "—")] : null,

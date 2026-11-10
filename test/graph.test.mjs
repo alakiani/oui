@@ -87,5 +87,71 @@ test("briefs and judgement-call prompts render with nothing left blank", async (
   assert.match(texts.review, /ticket T1 "Limiter" is finished/);
   assert.match(texts.review, /oui verdict T1 pass/);
   assert.match(texts.plan, /"goalId": "G1"/);
+  assert.match(texts.plan, /A ticket is a dish, not an ingredient/, "the planner is told how this kitchen writes tickets");
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("what the chef decided for a goal reaches the cooks, the triage and the inspector", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "oui-decide-"));
+  process.env.OUI_HOME = home;
+  const { Kitchen } = await import("../src/kitchen.mjs");
+  const { cookBrief, rolePrompt } = await import("../src/brief.mjs");
+  const kitchen = new Kitchen();
+  const chef = { role: "chef" };
+  kitchen.projectAdd({ path: home, name: "api" });
+  const plan = kitchen.plan({ goal: { title: "Rate-limit the API", detail: "Stop noisy clients.", project: "api" }, tickets: [{ key: "q", kind: "decide", title: "Count per key or per IP?", brief: "It sets the bucket key.", options: ["Per key", "Per IP"], pick: "Per key" }, { key: "open", kind: "decide", title: "Which tier is the default?" }, { key: "wire", title: "Wire it", needs: ["q"], brief: "Use it." }, { key: "docs", title: "Document it", brief: "Write it up." }] }, chef);
+  const [q, open, wire, docs] = plan.tasks.map((t) => kitchen.state.tasks[t.id]);
+  assert.deepEqual([q.kind, q.options, q.pick, q.decision], ["decide", ["Per key", "Per IP"], "Per key", null]);
+  assert.equal(wire.options, undefined, "only a question carries options");
+  Object.assign(q, { status: "done", decision: "Per IP", report: { summary: "Decided: Per IP", handoff: "The chef decided: Per IP" } });
+  for (const t of [wire, docs]) Object.assign(t, { workdir: home });
+  const ask = kitchen.askCreate({ title: "Which header carries the key?" }, { role: "cook", task: wire.id });
+  for (const text of [cookBrief(kitchen, wire), cookBrief(kitchen, docs), rolePrompt("triage", kitchen, { ask }), rolePrompt("review", kitchen, { task: wire })]) {
+    assert.match(text, /## Decisions for this goal\n- Count per key or per IP\? → Per IP\n- Which tier is the default\? → still with the chef/);
+    assert.ok(!/\{\{|\}\}/.test(text));
+  }
+  assert.ok(!/## What came before/.test(cookBrief(kitchen, wire)), "a decision is not repeated as a handoff");
+  assert.ok(!new RegExp(`${open.id} “`).test(cookBrief(kitchen, docs)), "a question is not listed as a cook to talk to");
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("the chef's own prompt files win over the built-in ones, one file or one role at a time", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "oui-prompts-"));
+  process.env.OUI_HOME = home;
+  const { Kitchen } = await import("../src/kitchen.mjs");
+  const { PROMPTS, builtinPrompt, cookContract, ownPrompt, promptFile, rolePrompt, sousManual } = await import("../src/brief.mjs");
+  const kitchen = new Kitchen();
+  kitchen.projectAdd({ path: home, name: "api" });
+  const plan = kitchen.plan({ goal: { title: "A goal", detail: "Do it.", project: "api" }, tickets: [{ key: "a", title: "One", brief: "x" }] }, { role: "chef" });
+  const a = kitchen.state.tasks[plan.tasks[0].id];
+  Object.assign(a, { workdir: home, branch: "oui/G1/T1-one" });
+  const goal = kitchen.state.goals[plan.goal];
+  goal.branch = "oui/G1-a-goal";
+
+  // Out of the box: every file is the built-in one, and the manual carries the ticket rules and the chef's preferences.
+  for (const name of Object.keys(PROMPTS)) assert.equal(promptFile(name), builtinPrompt(name));
+  const manual = sousManual("- Skip the questions on small goals");
+  assert.ok(!/\{\{|\}\}/.test(manual), "the sous chef's manual has an unfilled placeholder");
+  assert.match(manual, /## Mise en place/);
+  assert.match(manual, /A ticket is a dish, not an ingredient/);
+  assert.match(manual, /## The chef's standing preferences\nThese come before anything else on this page\.\n- Skip the questions on small goals/);
+  assert.ok(!/standing preferences\n/.test(sousManual()), "no preferences, no empty heading");
+
+  // The chef's own files are picked up on the next use, without a restart.
+  fs.mkdirSync(path.join(home, "prompts"));
+  fs.writeFileSync(ownPrompt("cook.md"), "You cook the way this house cooks.\n");
+  fs.writeFileSync(ownPrompt("tickets.md"), "- One ticket per pull request.\n");
+  fs.writeFileSync(ownPrompt("roles.md"), "## review\n\nHouse review of {{ticket}}: read `git diff {{base}}...{{branch}}`, then give a verdict.\n");
+  assert.equal(cookContract(), "You cook the way this house cooks.\n");
+  assert.equal(promptFile("cook.md"), ownPrompt("cook.md"));
+  assert.match(sousManual(), /- One ticket per pull request\./);
+  assert.match(rolePrompt("plan", kitchen, { goal }), /- One ticket per pull request\./, "the planner follows the chef's ticket rules too");
+  assert.match(rolePrompt("plan", kitchen, { goal }), /You are the sous chef in Oui Chef's kitchen, planning one goal/, "a role the chef's file leaves out stays built-in");
+  assert.equal(rolePrompt("review", kitchen, { task: a }), "House review of T1: read `git diff oui/G1-a-goal...oui/G1/T1-one`, then give a verdict.");
+
+  // An empty file is not an instruction to say nothing.
+  fs.writeFileSync(ownPrompt("cook.md"), "\n");
+  assert.equal(promptFile("cook.md"), builtinPrompt("cook.md"));
+  assert.match(cookContract(), /You are a line cook/);
   fs.rmSync(home, { recursive: true, force: true });
 });

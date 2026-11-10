@@ -44,6 +44,10 @@ function tailJsonl(file, max) {
   }
 }
 
+export const TICKET_KINDS = ["build", "ops", "scout", "decide", "land"];
+// Kinds that are a step in the plan rather than a cook's work.
+export const NO_COOK = new Set(["decide", "land"]);
+
 const fresh = () => ({ version: 1, rev: 0, seq: { goal: 0, ticket: 0, ask: 0, action: 0, event: 0 }, service: { on: true }, projects: {}, goals: {}, tasks: {}, asks: {}, grants: [] });
 
 export class Fail extends Error {
@@ -214,7 +218,7 @@ export class Kitchen {
 
   #newTask(goal, spec, by) {
     const id = this.nextId("ticket", "T");
-    const kind = ["build", "ops", "scout", "land"].includes(spec.kind) ? spec.kind : "build";
+    const kind = TICKET_KINDS.includes(spec.kind) ? spec.kind : "build";
     this.state.tasks[id] = {
       id,
       goal: goal.id,
@@ -223,7 +227,9 @@ export class Kitchen {
       title: clip(spec.title, 120),
       brief: String(spec.brief ?? spec.title ?? "").trim(),
       accept: (spec.accept ?? []).map((a) => clip(a, 300)),
-      kind, // build: changes code in a worktree · ops: acts on systems · scout: investigates and reports
+      kind, // build: changes code in a worktree · ops: acts on systems · scout: investigates and reports · decide: a question for the chef · land: puts finished work on the base branch
+      // A decide ticket is its question: the choices on offer, and the one whoever wrote the plan would make.
+      ...(kind === "decide" ? { options: [spec.options ?? []].flat().map((o) => clip(o, 160)).slice(0, 6), pick: spec.pick ? clip(spec.pick, 160) : null, decision: null } : {}),
       needs: [],
       verify: spec.verify ?? [],
       priority: spec.priority ?? 0,
@@ -405,6 +411,7 @@ export class Kitchen {
   askDeny({ id, note }, who) {
     const ask = this.ask(id);
     if (ask.status !== "open") throw new Fail(`${id} is already ${ask.status}`);
+    if (ask.task && this.state.tasks[ask.task]?.kind === "decide") throw new Fail(`${id} is a question: answer it, or drop it with oui 86 ${ask.task}`);
     Object.assign(ask, { status: "denied", by: who.role, note: note ? clip(note, 500) : null, resolvedAt: now() });
     this.emit({ type: "approval", from: "chef", to: ask.from, task: ask.task, goal: ask.goal, ask: id, text: `${id} denied${note ? ` — ${note}` : ""}` });
     if (ask.kind === "land" && ask.task) this.task(ask.task).status = "paused"; // not now: `oui resume` asks again

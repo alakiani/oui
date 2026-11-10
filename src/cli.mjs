@@ -10,6 +10,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { P, OUI_BIN, ROOT, ensureDir, home, loadConfig, readJson, writeJsonAtomic } from "./paths.mjs";
 import { alive, chefRpc, daemonInfo, get, rpc, up } from "./client.mjs";
 import { TIER_NAME } from "./guard/rules.mjs";
+import { PROMPTS, builtinPrompt, ownPrompt, promptFile, sousManual } from "./brief.mjs";
 
 const HELP = `oui — Oui Chef: give the order, get asked only what is yours to decide.
 
@@ -35,7 +36,8 @@ const HELP = `oui — Oui Chef: give the order, get asked only what is yours to 
     oui land <G>                   land a finished goal you deferred
 
   Steer
-    oui ticket add --goal <G> --title .. --brief .. [--needs T1,T2] [--kind build|ops|scout|land]
+    oui ticket add --goal <G> --title .. --brief .. [--needs T1,T2] [--kind build|ops|scout|decide|land]
+                                   a question for you: --kind decide --title "<question>" [--option A --option B --pick A]
     oui pause|resume|accept <T> [--note ..]
     oui refire <T> [--note ..]     send a ticket back to its cook   (also: oui retry)
     oui 86 <T>                     cancel a ticket                  (also: oui cancel)
@@ -43,6 +45,10 @@ const HELP = `oui — Oui Chef: give the order, get asked only what is yours to 
     oui goal pause|resume|cancel <G>
     oui service on|off             off: nothing new is fired; turns in progress finish
     oui remember "<preference>"    a standing rule every cook and plan gets
+
+  Make it yours
+    oui prompts                    what each agent is told, and which copy is in use
+    oui prompts copy <name>        start your own copy of one; yours wins over the built-in
 
   The pass
     oui actions [--ticket T]       what cooks changed outside their stations, with undo recipes
@@ -181,7 +187,7 @@ const commands = {
   async task(args, flags) {
     if (args[0] !== "add") die("oui ticket add --goal <G> --title .. --brief ..");
     if (!flags.title) die("A ticket needs --title");
-    const t = await chefRpc("ticket.add", { goal: flags.goal ? ID(flags.goal) : undefined, title: flags.title, brief: flags.brief, accept: flags.accept, needs: (flags.needs ?? []).map(ID), kind: flags.kind, verify: flags.verify, priority: flags.priority ? Number(flags.priority) : 0 });
+    const t = await chefRpc("ticket.add", { goal: flags.goal ? ID(flags.goal) : undefined, title: flags.title, brief: flags.brief, accept: flags.accept, needs: (flags.needs ?? []).map(ID), kind: flags.kind, options: flags.option, pick: flags.pick, verify: flags.verify, priority: flags.priority ? Number(flags.priority) : 0 });
     say(`Added ${t.id} “${t.title}”${t.needs.length ? ` after ${t.needs.join(", ")}` : ""}`);
   },
 
@@ -193,6 +199,7 @@ const commands = {
       say(`${t.id}  ${t.title}   [${t.status}]  ${t.kind} · goal ${t.goal} · project ${t.project}${t.needs.length ? ` · after ${t.needs.join(", ")}` : ""}`);
       if (t.workdir) say(`  station ${t.workdir}${t.branch ? `  (${t.branch})` : ""}`);
       say(`\n${t.brief}`);
+      if (t.options?.length) say(`\nOptions: ${t.options.map((o, i) => `${i + 1}) ${o}`).join("   ")}${t.pick ? `\nThe plan would pick: ${t.pick}` : ""}`);
       if (t.accept?.length) say(`\nDone when:\n${t.accept.map((a) => `  - ${a}`).join("\n")}`);
       if (t.report) say(`\nReport: ${t.report.summary}${t.report.handoff ? `\nHandoff: ${t.report.handoff}` : ""}${t.report.evidence ? `\nEvidence: ${t.report.evidence}` : ""}`);
       if (t.failure) say(`\nFailed: ${t.failure}`);
@@ -380,7 +387,11 @@ const commands = {
   async sous(args) {
     await up();
     const dir = ensureDir(P.sous());
-    fs.writeFileSync(path.join(dir, "CLAUDE.md"), fs.readFileSync(path.join(ROOT, "prompts", "sous.md"), "utf8"));
+    let notes = "";
+    try {
+      notes = fs.readFileSync(P.notes(), "utf8").trim();
+    } catch {}
+    fs.writeFileSync(path.join(dir, "CLAUDE.md"), sousManual(notes));
     writeJsonAtomic(path.join(dir, ".claude", "settings.json"), { permissions: { allow: ["Bash(oui *)", "Bash(oui)", "Read", "Glob", "Grep"] } });
     const projects = await rpc("project.list");
     const bin = process.env.OUI_CLAUDE_BIN || "claude";
@@ -390,6 +401,25 @@ const commands = {
     delete env.OUI_TOKEN;
     const res = spawnSync(bin, argv, { cwd: dir, stdio: "inherit", env });
     if (res.error) die(`Could not start ${bin}: ${res.error.message}`);
+  },
+
+  // What each agent is told is a file. The chef's own copy, in the home, wins over the built-in one.
+  async prompts(args) {
+    const names = Object.keys(PROMPTS);
+    if (args[0] === "path") return say(P.prompts());
+    if (args[0] === "copy") {
+      const name = names.find((n) => n === args[1] || n === `${args[1]}.md`);
+      if (!name) die(`oui prompts copy <${names.map((n) => n.replace(/\.md$/, "")).join("|")}>`);
+      const to = ownPrompt(name);
+      if (fs.existsSync(to)) return say(`You already have your own ${name}: ${to}`);
+      ensureDir(P.prompts());
+      fs.copyFileSync(builtinPrompt(name), to);
+      return say(`Yours to edit: ${to}\nIt is used from the next conversation, plan, review or cook on. Delete it to go back to the built-in one.`);
+    }
+    if (args[0]) die("oui prompts   |   oui prompts copy <name>   |   oui prompts path");
+    say(`What each agent is told. A file of the same name in ${P.prompts()} wins over the built-in one,\nand an edit is used from the next conversation, plan, review or cook on: no restart.\n`);
+    for (const name of names) say(`  ${name.padEnd(11)} ${promptFile(name) === ownPrompt(name) ? "yours   " : "built-in"}  ${PROMPTS[name]}\n  ${"".padEnd(11)} ${promptFile(name)}`);
+    say(`\nMake one yours:  oui prompts copy ${names[0].replace(/\.md$/, "")}`);
   },
 
   // Copy the Herdr mod into Herdr's mods folder. Herdr picks it up from there.

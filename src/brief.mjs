@@ -1,22 +1,73 @@
 // What each agent is told. A cook gets its ticket, the goal in the chef's
 // words, and the handoff notes of the tickets it builds on: never anyone's
 // transcript. That is how context stays small as the plan grows.
+//
+// The words themselves are in prompts/. A file of the same name in the home's
+// prompts folder wins over the built-in one, so a kitchen can be run its own
+// way without touching the code. Files are read on every use: an edit applies
+// to the next cook, plan, review or conversation, with no restart.
 
 import fs from "node:fs";
 import path from "node:path";
-import { ROOT } from "./paths.mjs";
+import { P, ROOT } from "./paths.mjs";
 
-const read = (name) => fs.readFileSync(path.join(ROOT, "prompts", name), "utf8");
-let cache = null;
-const prompts = () => (cache ??= { cook: read("cook.md"), roles: Object.fromEntries(read("roles.md").split(/^## /m).filter(Boolean).map((s) => [s.slice(0, s.indexOf("\n")).trim(), s.slice(s.indexOf("\n") + 1).trim()])) });
+// Every prompt file, and what it steers. `oui prompts` prints this.
+export const PROMPTS = {
+  "sous.md": "the sous chef you talk to in `oui sous`: how a goal is talked through and planned",
+  "tickets.md": "how tickets are cut and briefed, for the sous chef and the planner alike",
+  "roles.md": "the planner behind `oui go`, the triage of cooks' questions, and the inspector",
+  "cook.md": "what every cook is told",
+};
 
-export const cookContract = () => prompts().cook;
+export const builtinPrompt = (name) => path.join(ROOT, "prompts", name);
+export const ownPrompt = (name) => path.join(P.prompts(), name);
+
+// The chef's own copy may not exist. A built-in one that is missing is a broken install, and says so.
+const own = (name) => {
+  try {
+    return fs.readFileSync(ownPrompt(name), "utf8");
+  } catch {
+    return "";
+  }
+};
+const builtin = (name) => fs.readFileSync(builtinPrompt(name), "utf8");
+
+// -> the file in use: the chef's own when there is one with something in it, else the built-in.
+export function promptFile(name) {
+  return own(name).trim() ? ownPrompt(name) : builtinPrompt(name);
+}
+
+const read = (name) => (own(name).trim() ? own(name) : builtin(name));
+
+function sections(text) {
+  return Object.fromEntries(
+    text
+      .split(/^## /m)
+      .filter(Boolean)
+      .map((s) => {
+        const i = s.indexOf("\n");
+        return i < 0 ? [s.trim(), ""] : [s.slice(0, i).trim(), s.slice(i + 1).trim()];
+      }),
+  );
+}
+
+// roles.md holds one section per judgement call. The chef's own file may carry only the ones it changes.
+const roleTemplate = (kind) => sections(own("roles.md"))[kind] || sections(builtin("roles.md"))[kind];
+
+export const cookContract = () => read("cook.md");
 
 const bullets = (list, empty = "- (none given: use the brief)") => (list?.length ? list.map((x) => `- ${x}`).join("\n") : empty);
 
-function preferences(kitchen) {
-  const notes = kitchen.preferences();
-  return notes ? `\n## The chef's standing preferences\nFollow these unless the brief says otherwise.\n${notes}\n` : "";
+const preferenceBlock = (notes, lead) => (notes ? `\n## The chef's standing preferences\n${lead}\n${notes}\n` : "");
+const preferences = (kitchen) => preferenceBlock(kitchen.preferences(), "Follow these unless the brief says otherwise.");
+
+// What the chef has settled for a goal through `decide` tickets, and what is still with them,
+// so that no cook builds on a guess and nobody asks the same thing twice.
+function decisions(s, goalId) {
+  const asked = Object.values(s.tasks).filter((t) => t.goal === goalId && t.kind === "decide" && t.status !== "cancelled");
+  if (!asked.length) return "";
+  const line = (t) => `- ${t.title} → ${t.decision ?? (t.status === "done" ? "left open by the chef: use your judgement" : "still with the chef")}`;
+  return `\n## Decisions for this goal\n${asked.map(line).join("\n")}\n`;
 }
 
 function mail(items) {
@@ -31,7 +82,7 @@ function mail(items) {
 
 // The rest of the goal in a few lines, so a cook knows who to tell when something changes.
 function others(s, task) {
-  const rest = Object.values(s.tasks).filter((t) => t.goal === task.goal && t.id !== task.id && !["cancelled"].includes(t.status) && !task.needs.includes(t.id));
+  const rest = Object.values(s.tasks).filter((t) => t.goal === task.goal && t.id !== task.id && t.kind !== "decide" && !["cancelled"].includes(t.status) && !task.needs.includes(t.id));
   if (!rest.length) return "";
   return `\n## Other tickets in this goal\n${rest.slice(0, 12).map((t) => `- ${t.id} “${t.title}” (${t.status === "todo" ? (t.needs.includes(task.id) ? "waits for you" : "not started") : t.status})`).join("\n")}\nTell another cook something with \`oui msg <T-id> "..."\`. Their work is theirs; do not do it for them.`;
 }
@@ -40,7 +91,7 @@ export function cookBrief(kitchen, task) {
   const s = kitchen.state;
   const goal = s.goals[task.goal];
   const project = s.projects[task.project];
-  const upstream = task.needs.map((id) => s.tasks[id]).filter(Boolean);
+  const upstream = task.needs.map((id) => s.tasks[id]).filter((t) => t && t.kind !== "decide"); // decisions have a section of their own
   const where =
     task.branch && project.git
       ? `Your station is \`${task.workdir}\`, a git worktree of ${project.name} on branch \`${task.branch}\`, cut from \`${goal.branch}\` (the branch for this goal, which already contains the finished tickets you build on). The base branch \`${project.base}\` does not have that work unless a land step came before you.\n${task.kind === "ops" ? "This is an ops ticket: you act on systems from here. If it also needs file changes, commit them on this branch." : "Commit your work on this branch."} Do not push this branch, open a pull request for it or merge it: when you report done, Oui Chef checks the work, merges it into \`${goal.branch}\` and lands the goal as a whole.`
@@ -53,6 +104,7 @@ export function cookBrief(kitchen, task) {
     `# ${task.id}: ${task.title}`,
     `Part of goal ${goal.id}: ${goal.title}`,
     goal.detail && goal.detail !== goal.title ? `\n## The goal, in the chef's words\n${goal.detail}` : "",
+    decisions(s, goal.id).trimEnd(),
     `\n## What to do\n${task.brief}`,
     `\n## Done when\n${bullets(task.accept)}`,
     checks.length ? `\nThese must pass before you report done; Oui Chef runs them again afterwards:\n${checks.map((c) => `- \`${c}\``).join("\n")}` : "",
@@ -79,13 +131,19 @@ function fill(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_m, key) => vars[key] ?? "");
 }
 
+// The manual the sous chef reads when the chef opens a conversation with `oui sous`.
+export function sousManual(notes = "") {
+  return fill(read("sous.md"), { tickets: read("tickets.md").trim(), preferences: preferenceBlock(notes, "These come before anything else on this page.") });
+}
+
 export function rolePrompt(kind, kitchen, ctx) {
   const s = kitchen.state;
-  const template = prompts().roles[kind];
+  const template = roleTemplate(kind);
+  if (!template) throw new Error(`No prompt for role ${kind}`);
   const prefs = preferences(kitchen);
   if (kind === "plan") {
     const project = s.projects[ctx.goal.project];
-    return fill(template, { detail: ctx.goal.detail, goal: ctx.goal.id, project: project.name, path: project.path, git: project.git ? ` (git, base branch \`${project.base}\`, finished goals land ${project.landing === "pr" ? "as a pull request" : "by local merge"})` : " (not a git repository)", preferences: prefs });
+    return fill(template, { detail: ctx.goal.detail, goal: ctx.goal.id, project: project.name, path: project.path, git: project.git ? ` (git, base branch \`${project.base}\`, finished goals land ${project.landing === "pr" ? "as a pull request" : "by local merge"})` : " (not a git repository)", preferences: prefs, tickets: read("tickets.md").trim() });
   }
   const task = ctx.task ?? (ctx.ask?.task ? s.tasks[ctx.ask.task] : null);
   const goal = task ? s.goals[task.goal] : null;
@@ -99,6 +157,7 @@ export function rolePrompt(kind, kitchen, ctx) {
       goalTitle: goal?.title ?? "",
       brief: task?.brief ?? "",
       detail: goal?.detail ?? "",
+      decisions: goal ? decisions(s, goal.id) : "",
       preferences: prefs,
       ask: a.id,
       question: a.title,
@@ -120,6 +179,7 @@ export function rolePrompt(kind, kitchen, ctx) {
       title: task.title,
       brief: task.brief,
       accept: bullets(task.accept),
+      decisions: decisions(s, goal.id),
       summary: task.report?.summary ?? "",
       evidence: task.report?.evidence || "none",
       branch: task.branch ?? "",

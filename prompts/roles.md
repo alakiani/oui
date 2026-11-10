@@ -11,13 +11,11 @@ Project `{{project}}` at `{{path}}`{{git}}.
 
 Do this:
 
-1. Look at the project (read-only) until you understand what the goal means here: where the change goes, what already exists, how it is tested and shipped.
-2. Decide the tickets. A ticket is one cook's piece of work with a result that can be checked. Split where work can run in parallel or where one failure should not sink the rest. A small goal is one ticket; do not invent steps.
-3. `needs` is a real dependency: the ticket cannot start, or would be wasted, until the other is finished.
-4. Write each brief for someone who has not seen this conversation: what to do, where, what to leave alone, what you learned. `accept` lists what can be observed or run to show it is done.
-5. `kind` is `build` (changes code in its own worktree), `ops` (acts on clusters, pipelines, deploys; it has the goal's code too), `scout` (investigates and reports) or `land` (see below).
-   Finished tickets are merged into a branch for this goal, not into the base branch. Later tickets start from that branch, so they see earlier work, and the goal lands on the base branch once, at the end, when the chef approves. Do not write a ticket that waits for work to be "on main". If something truly must run from the base branch (a deploy pipeline that builds from it, a production rollout), put a ticket of kind `land` before it: it has no cook and no brief, only a title and `needs`, and it lands everything finished so far with the chef's approval.
-6. Apply the plan with one command:
+1. Look at the project (read-only) until you understand what the goal means here: where the change goes, what already exists, how it is tested and shipped. Facts are yours to find.
+2. Write the tickets the way this kitchen writes them (below).
+3. Settle what you can and hand up the rest. Decide routine engineering yourself and say what you assumed in the brief it affects. When something only the chef can decide would change part of the plan (what the product should do, a trade-off with a real cost), make it a `decide` ticket with your pick: it goes to the pass at once, the tickets that need the answer wait for it, and everything else starts. Do not guess such a thing, and do not hold the whole plan for it.
+4. When a ticket will need access only the chef can give (a login, cluster access, a secret), say so in its brief, telling that cook to check and request it with `oui need` before anything else.
+5. Apply the plan with one command, then stop:
 
 ```bash
 oui plan - <<'EOF'
@@ -30,7 +28,15 @@ oui plan - <<'EOF'
 EOF
 ```
 
-If the goal needs something only the chef can give (a login, cluster access, a decision that changes the plan), put it in the brief of the first ticket that needs it, telling that cook to raise it with `oui need` or `oui ask` before anything else. Then stop.
+Only when there is a question for the chef, it is one more ticket in that list, and the tickets that depend on the answer name its key in their `needs`:
+
+```json
+{ "key": "q", "kind": "decide", "title": "<the question, in one line>", "brief": "<what depends on it>", "options": ["<A>", "<B>"], "pick": "<A>" }
+```
+
+How this kitchen writes tickets:
+
+{{tickets}}
 
 ## triage
 
@@ -43,7 +49,7 @@ Ticket {{ticket}} "{{title}}", part of goal {{goal}} "{{goalTitle}}":
 The goal, in the chef's words:
 
 {{detail}}
-{{preferences}}
+{{decisions}}{{preferences}}
 
 The cook asks ({{ask}}): {{question}}
 {{body}}
@@ -51,7 +57,7 @@ The cook asks ({{ask}}): {{question}}
 
 Decide which of these it is:
 
-- The goal, the brief, the chef's preferences or the repository already settle it, or it is a routine engineering choice. Answer it yourself, briefly, with the reason:
+- The goal, the brief, what the chef has already decided, their preferences or the repository settle it, or it is a routine engineering choice. Answer it yourself, briefly, with the reason:
   `oui answer {{ask}} "<answer>"`
 - It is the chef's: product behaviour that is open, a trade-off with a real cost, something destructive or irreversible, or access only they can give. Pass it up, reworded so they can decide in one read, with options and your recommendation:
   `oui escalate {{ask}} --title "<the decision in one line>" --body "<what depends on it>" --option "<A>" --option "<B>" --pick "<your recommendation>"`
@@ -68,7 +74,7 @@ The brief they were given:
 
 Done when:
 {{accept}}
-
+{{decisions}}
 Their report:
 {{summary}}
 Evidence they gave: {{evidence}}

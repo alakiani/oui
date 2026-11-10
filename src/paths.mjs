@@ -22,6 +22,7 @@ export const P = {
   config: () => path.join(home(), "config.json"),
   policy: () => path.join(home(), "policy.json"),
   notes: () => path.join(home(), "notes", "chef.md"),
+  prompts: () => path.join(home(), "prompts"),
   daemonLog: () => path.join(home(), "daemon.log"),
   tasks: () => path.join(home(), "tickets"),
   task: (id) => path.join(home(), "tickets", id),

@@ -104,7 +104,9 @@ oui undo X4 --yes
 
 Use the number `oui actions` shows for the landing. Without `--yes`, `oui undo` only shows what it would run. It moves the base branch back and leaves your own uncommitted edits alone; if they are in the way, git refuses and nothing changes.
 
-To talk a goal through before any ticket exists, use `oui sous` instead of `oui go`. It opens a conversation with the sous chef.
+To talk a goal through before any ticket exists, use `oui sous` instead of `oui go`. It opens a conversation with the sous chef, who reads the repository and then asks you what only you can settle, a round at a time: numbered questions, each with the answer it would give. Reply "yes to all", or "2: per IP, the rest yes". Say "cook it" whenever you have heard enough.
+
+A question does not have to hold everything up. When only part of a plan depends on it, the sous chef can put it on the pass as a ticket of its own: the tickets that need your answer wait, and the rest start cooking.
 
 ## 4. Tell it what production is, before any cluster work
 
@@ -180,6 +182,22 @@ herdr-app status
 
 Prefer tmux? Set `"sessions": "tmux"` and look in with `tmux attach -t oui`.
 
+## Make it yours
+
+Everything above is how Oui Chef works out of the box, not how it has to work. What the sous chef asks, how tickets are cut and what the inspector looks for are plain text files:
+
+```bash
+oui prompts
+```
+
+That lists them, says what each one steers and which copy is in use. To change one, make it yours and edit it:
+
+```bash
+oui prompts copy sous
+```
+
+Your copy lives in `~/.ouichef/prompts` and wins over the built-in one. The next conversation, plan, review or cook uses it; nothing needs restarting. Delete the file to go back.
+
 ## Day to day
 
 | You want to | Run |
@@ -198,6 +216,7 @@ Prefer tmux? Set `"sessions": "tmux"` and look in with `tmux attach -t oui`.
 
 - **A ticket failed or went quiet.** It is on the pass with *Retry*, *Accept as done* and *Cancel ticket*. `oui tail T3` shows what it did. Typing your own words instead of clicking an option retries it with that as guidance.
 - **A cook keeps asking for something you already settled.** Say it once for good with `oui remember`.
+- **The sous chef asks too much, or too little.** `oui remember "skip the questions on small goals"`, or edit your copy of `sous.md` (see Make it yours).
 - **Something was held that you never want to be asked about.** `oui approve A5 --always` for that exact command, or `oui policy set <rule> record` for the whole rule.
 - **The daemon will not start, or behaves oddly.** Read `~/.ouichef/daemon.log`.
 - **Start over.** `oui down`, then delete `~/.ouichef`. In each repository, `git worktree prune` and delete the `oui/…` branches you no longer want.
