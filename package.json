@@ -1,0 +1,44 @@
+{
+  "name": "ouichef",
+  "version": "0.1.0",
+  "description": "An orchestrator for coding agents, run like a kitchen: one board, tickets in dependency order, autonomous cooks, and a pass that holds anything risky for you.",
+  "keywords": [
+    "ai",
+    "agents",
+    "orchestrator",
+    "claude-code",
+    "coding-agents",
+    "herdr",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alakiani/oui.git"
+  },
+  "homepage": "https://github.com/alakiani/oui#readme",
+  "bugs": {
+    "url": "https://github.com/alakiani/oui/issues"
+  },
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "oui": "bin/oui.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "demo": "node bin/oui.mjs demo"
+  },
+  "files": [
+    "bin",
+    "src",
+    "prompts",
+    "web",
+    "herdr",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oui Chef</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23141a22'/%3E%3Cpath d='M6 22h20M8.5 22a7.5 7.5 0 0 1 15 0M16 14.5v-3' fill='none' stroke='%23f2a93b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #0e1116; --panel: #151a22; --raised: #1b222c; --hover: #212a36; --line: #29323f; --line-soft: #1e2631;
+  --text: #e7ebf1; --dim: #9ca7b7; --faint: #67727f;
+  --amber: #f2a93b; --amber-bg: #f2a93b1c; --amber-ink: #1a1305;
+  --blue: #62a9ff; --blue-bg: #62a9ff1a; --teal: #40cdb1; --teal-bg: #40cdb11a; --violet: #ab98f8; --violet-bg: #ab98f81a;
+  --green: #5ab884; --green-bg: #5ab88418; --red: #f0716a; --red-bg: #f0716a1a;
+  --shadow: 0 10px 30px #0008;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --raised: #f1f3f6; --hover: #e9ecf1; --line: #dbe0e8; --line-soft: #e8ebf0;
+    --text: #151a23; --dim: #566174; --faint: #8b95a4;
+    --amber: #b06500; --amber-bg: #b0650014; --amber-ink: #ffffff;
+    --blue: #1d6cd3; --blue-bg: #1d6cd312; --teal: #0c8a73; --teal-bg: #0c8a7312; --violet: #6851d0; --violet-bg: #6851d012;
+    --green: #2c8251; --green-bg: #2c825112; --red: #c5403a; --red-bg: #c5403a12;
+    --shadow: 0 10px 30px #0f172a22;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+code, .mono { font-family: var(--mono); font-size: 12px; }
+
+/* ---- top bar */
+.bar { display: flex; align-items: center; gap: 14px; height: 56px; padding: 0 20px; border-bottom: 1px solid var(--line-soft); background: var(--panel); flex: none; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: .01em; margin-right: 6px; }
+.brand svg { width: 26px; height: 26px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--line); color: var(--dim); font-size: 12.5px; white-space: nowrap; background: none; }
+.chip b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+.chip.hot { border-color: transparent; background: var(--amber); color: var(--amber-ink); font-weight: 600; }
+.chip.hot b { color: inherit; }
+.chip.clear { color: var(--green); border-color: var(--green-bg); background: var(--green-bg); }
+.spacer { flex: 1; }
+.expo { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: none; color: var(--dim); font-size: 12.5px; }
+.expo:hover { background: var(--hover); color: var(--text); }
+.expo i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.expo.off { color: var(--amber); border-color: var(--amber); }
+.expo.off i { background: var(--amber); }
+
+/* ---- layout */
+.kitchen { flex: 1; min-height: 0; display: grid; grid-template-columns: 360px minmax(0, 1fr); }
+.rail { border-right: 1px solid var(--line-soft); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+.rail section { display: flex; flex-direction: column; min-height: 0; }
+#inbox { flex: 0 1 auto; max-height: 62%; }
+#comms { flex: 1 1 0; border-top: 1px solid var(--line-soft); }
+.head { display: flex; align-items: center; gap: 8px; padding: 14px 18px 8px; font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); flex: none; }
+.head .n { color: var(--amber); }
+.scroll { overflow-y: auto; padding: 0 12px 14px; min-height: 0; }
+.flow { overflow: auto; padding: 18px 22px 40px; min-width: 0; }
+.empty { color: var(--faint); padding: 6px 6px 10px; font-size: 13px; }
+
+/* ---- the pass: what is waiting for the chef */
+.ask { border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 10px; background: var(--raised); padding: 12px 12px 12px 13px; margin-bottom: 10px; }
+.ask .meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--faint); margin-bottom: 6px; }
+.kind { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; padding: 2px 6px; border-radius: 4px; background: var(--amber-bg); color: var(--amber); }
+.kind.approval, .kind.land { background: var(--red-bg); color: var(--red); }
+.kind.access { background: var(--blue-bg); color: var(--blue); }
+.tasklink { font-family: var(--mono); font-size: 11.5px; color: var(--dim); background: none; border: 0; padding: 0; }
+.tasklink:hover { color: var(--text); text-decoration: underline; }
+.holds { color: var(--amber); font-weight: 600; }
+.ask h3 { margin: 0 0 4px; font-size: 14px; font-weight: 620; line-height: 1.35; }
+.ask .body { color: var(--dim); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9.5em; overflow: auto; }
+.cmd { margin: 8px 0 0; padding: 8px 10px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line-soft); font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmd::before { content: "$ "; color: var(--faint); }
+details.undo { margin-top: 8px; font-size: 12.5px; color: var(--dim); }
+details.undo summary { cursor: pointer; color: var(--green); }
+details.undo .steps { margin: 6px 0 0; padding: 7px 9px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line-soft); font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); }
+.opts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.opt { text-align: left; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.opt:hover { border-color: var(--amber); background: var(--amber-bg); }
+.opt.pick { border-color: var(--amber); }
+.opt small { color: var(--amber); font-weight: 600; margin-left: 6px; }
+.row { display: flex; gap: 6px; margin-top: 8px; }
+.row input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); }
+.row input:focus, .composer textarea:focus { outline: 2px solid var(--amber-bg); border-color: var(--amber); }
+.btn { height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; font-weight: 560; white-space: nowrap; }
+.btn:hover { background: var(--hover); }
+.btn.go { background: var(--amber); border-color: var(--amber); color: var(--amber-ink); }
+.btn.go:hover { filter: brightness(1.08); }
+.btn.no:hover { border-color: var(--red); color: var(--red); }
+.btn.quiet { border-color: transparent; color: var(--dim); background: none; }
+.btn.quiet:hover { color: var(--text); background: var(--hover); }
+.btn:disabled { opacity: .5; cursor: default; }
+
+/* ---- comms */
+.filters { display: flex; gap: 4px; margin-left: auto; text-transform: none; letter-spacing: 0; }
+.filters button { border: 0; background: none; color: var(--faint); font-size: 12px; padding: 2px 7px; border-radius: 5px; font-weight: 500; }
+.filters button.on { background: var(--hover); color: var(--text); }
+.ev { display: grid; grid-template-columns: 38px 1fr; gap: 8px; padding: 6px 6px; border-radius: 6px; font-size: 12.5px; }
+.ev:hover { background: var(--raised); }
+.ev time { color: var(--faint); font: 11px/1.7 var(--mono); }
+.ev .who { color: var(--dim); font-weight: 560; }
+.ev .who .a { padding: 0 1px; }
+.ev .a.cook { color: var(--blue); } .ev .a.sous { color: var(--violet); } .ev .a.chef { color: var(--amber); } .ev .a.pass { color: var(--red); } .ev .a.expediter, .ev .a.board { color: var(--faint); }
+.ev .txt { color: var(--dim); overflow-wrap: anywhere; }
+.ev-note .txt, .ev-system .txt { color: var(--faint); }
+.ev[data-task] { cursor: pointer; }
+
+/* ---- goals and the flow */
+.composer { display: flex; gap: 8px; margin-bottom: 22px; max-width: 900px; }
+.composer textarea { flex: 1; resize: none; height: 40px; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel); line-height: 20px; }
+.composer select { height: 40px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel); padding: 0 8px; }
+.composer .btn { height: 40px; }
+.goal { margin-bottom: 30px; }
+.goal > header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.goal .gid { font: 12px var(--mono); color: var(--faint); }
+.goal h2 { margin: 0; font-size: 16px; font-weight: 640; }
+.goal .proj { font-size: 12px; color: var(--faint); }
+.goal .state { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--raised); color: var(--dim); }
+.goal .state.done { background: var(--green-bg); color: var(--green); }
+.goal .state.planning { background: var(--violet-bg); color: var(--violet); }
+.meter { width: 120px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; align-self: center; }
+.meter i { display: block; height: 100%; background: var(--green); border-radius: 3px; transition: width .4s; }
+.count { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.lane { position: relative; }
+.lane svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.edge { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.edge.open { stroke-dasharray: 4 5; }
+.edge.met { stroke: var(--green); opacity: .45; }
+.edge.hl { stroke: var(--amber); opacity: 1; stroke-width: 2; }
+.lane.focus .edge:not(.hl) { opacity: .25; }
+.lane.focus .card:not(.hl) { opacity: .45; }
+.card { position: absolute; width: 224px; height: 92px; padding: 9px 11px 9px 13px; border-radius: 10px; border: 1px solid var(--line); border-left: 3px solid var(--faint); background: var(--panel); text-align: left; display: flex; flex-direction: column; gap: 3px; transition: opacity .15s, border-color .15s, box-shadow .15s; }
+.card:hover { box-shadow: var(--shadow); border-color: var(--faint); z-index: 2; }
+.card .top { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--faint); }
+.card .id { font-family: var(--mono); }
+.pill { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.card .kindtag { margin-left: auto; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; }
+.card .title { font-weight: 600; font-size: 13.5px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card .line { margin-top: auto; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card.needs_you { border-left-color: var(--amber); background: linear-gradient(var(--amber-bg), var(--amber-bg)), var(--panel); }
+.card.needs_you .pill, .card.needs_you .line { color: var(--amber); }
+.card.running, .card.blocked { border-left-color: var(--blue); } .card.running .pill, .card.blocked .pill { color: var(--blue); }
+.card.running .pill i { animation: pulse 1.6s ease-in-out infinite; }
+.card.review, .card.with_sous { border-left-color: var(--violet); } .card.review .pill, .card.with_sous .pill { color: var(--violet); }
+.card.ready { border-left-color: var(--teal); } .card.ready .pill { color: var(--teal); }
+.card.done { border-left-color: var(--green); } .card.done .pill { color: var(--green); } .card.done .title { color: var(--dim); }
+.card.failed, .card.stuck { border-left-color: var(--red); } .card.failed .pill, .card.stuck .pill, .card.failed .line { color: var(--red); }
+.card.waiting, .card.paused { background: none; border-style: dashed; border-left-style: solid; }
+@keyframes pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .card.running .pill i { animation: none; } }
+
+/* ---- drawer */
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow); display: flex; flex-direction: column; z-index: 10; }
+.drawer[hidden] { display: none; }
+.drawer > header { display: flex; align-items: flex-start; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line-soft); }
+.drawer h2 { margin: 2px 0 0; font-size: 16px; flex: 1; }
+.drawer .inner { overflow-y: auto; padding: 14px 18px 24px; }
+.drawer h4 { margin: 18px 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.drawer p, .drawer li { color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 6px; }
+.drawer ul { margin: 0; padding-left: 18px; }
+.drawer pre { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line-soft); font: 11.5px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); max-height: 340px; overflow: auto; }
+.acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--red); color: #fff; padding: 9px 14px; border-radius: 8px; font-size: 13px; z-index: 20; box-shadow: var(--shadow); }
+
+/* ---- narrow: one column, the flow becomes an ordered list */
+@media (max-width: 900px) {
+  body { display: block; }
+  .kitchen { display: block; }
+  .rail { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  #inbox { max-height: none; } #comms { display: none; }
+  .bar { height: auto; padding: 10px 16px; flex-wrap: wrap; }
+  .flow { padding: 16px; overflow: visible; }
+  .lane { height: auto !important; width: auto !important; display: flex; flex-direction: column; gap: 8px; }
+  .lane svg { display: none; }
+  .card { position: static; width: auto; height: auto; min-height: 76px; }
+  .composer { flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--raised)"/><path d="M6 22h20M8.5 22a7.5 7.5 0 0 1 15 0M16 14.5v-3" fill="none" stroke="var(--amber)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Oui Chef
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="spacer"></div>
+  <button class="expo" id="expo" title="When paused, nothing new is fired. Turns in progress finish."><i></i><span></span></button>
+</header>
+<main class="kitchen">
+  <aside class="rail">
+    <section id="inbox"><div class="head">The pass <span class="n" id="inboxN"></span></div><div class="scroll" id="asks"></div></section>
+    <section id="comms">
+      <div class="head">Comms<div class="filters" id="filters"></div></div>
+      <div class="scroll" id="feed"></div>
+    </section>
+  </aside>
+  <section class="flow" id="flow"></section>
+</main>
+<aside class="drawer" id="drawer" hidden></aside>
+<script>window.OUI_TOKEN = "__OUI_TOKEN__";</script>
+<script>
+"use strict";
+// Everything on this page that comes from an agent is set as text, never as HTML.
+const $ = (id) => document.getElementById(id);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs ?? {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "style") Object.assign(el.style, v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+const svg = (tag, attrs) => {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs ?? {})) el.setAttribute(k, v);
+  return el;
+};
+const ago = (ts) => {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
+};
+const clock = (ts) => new Date(ts).toTimeString().slice(0, 5);
+const num = (id) => Number(String(id).slice(1));
+
+let board = null;
+let filter = "talk";
+let open = null; // id shown in the drawer
+const drafts = {}; // ask id -> what you were typing when the board refreshed
+const seen = { asks: "", flow: "", feed: "", bar: "" };
+
+function toast(msg) {
+  const el = h("div", { class: "toast" }, msg);
+  document.body.append(el);
+  setTimeout(() => el.remove(), 5000);
+}
+async function rpc(method, params) {
+  const res = await fetch("/api/rpc", { method: "POST", headers: { "content-type": "application/json", "x-oui-token": window.OUI_TOKEN }, body: JSON.stringify({ method, params }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.ok === false) {
+    toast(body.error ?? `Oui Chef answered ${res.status}`);
+    throw new Error(body.error);
+  }
+  refresh();
+  return body.result;
+}
+
+// ---- top bar
+function renderBar(b) {
+  const c = b.counts;
+  const chip = (n, label, cls) => h("span", { class: `chip ${cls ?? ""}` }, h("b", {}, n), label);
+  $("chips").replaceChildren(
+    ...[
+      c.needsYou ? chip(c.needsYou, c.needsYou === 1 ? "needs you" : "need you", "hot") : h("span", { class: "chip clear" }, "The pass is clear"),
+      chip(c.running, "running"),
+      c.review ? chip(c.review, "in review") : null,
+      c.withSous ? chip(c.withSous, "with sous chef") : null,
+      chip(c.ready, "next up"),
+      chip(c.waiting, "waiting"),
+      chip(c.done, "done"),
+      c.failed ? chip(c.failed, "failed") : null,
+    ].filter(Boolean),
+  );
+  const p = $("expo");
+  p.className = `expo ${b.service.on ? "" : "off"}`;
+  p.querySelector("span").textContent = b.service.on ? `Service on · ${b.service.running}/${b.service.max} cooks` : "Service paused";
+  p.onclick = () => rpc("service", { on: !b.service.on });
+  document.title = c.needsYou ? `(${c.needsYou}) Oui Chef` : "Oui Chef";
+}
+
+// ---- the pass
+const KIND = { question: "Question", decision: "Decision", access: "Access", approval: "Approve", land: "Land", stuck: "Stuck" };
+function renderAsk(a) {
+  const input = h("input", { placeholder: a.kind === "access" ? "Tell the cook what you did…" : a.options.length ? "Or in your own words…" : "Your answer…", value: drafts[a.id] ?? "", "data-draft": a.id });
+  input.addEventListener("input", () => (drafts[a.id] = input.value));
+  const send = (text) => {
+    if (!String(text ?? "").trim()) return input.focus();
+    delete drafts[a.id];
+    rpc("answer", { id: a.id, text });
+  };
+  input.addEventListener("keydown", (e) => e.key === "Enter" && (isDecision ? decide("approve") : send(input.value)));
+  const isDecision = a.kind === "approval" || a.kind === "land";
+  const decide = (verb, extra = {}) => {
+    const note = input.value.trim();
+    delete drafts[a.id];
+    rpc(verb, { id: a.id, note, ...extra });
+  };
+  if (isDecision) input.placeholder = "Note (optional)";
+  return h(
+    "article", { class: "ask" },
+    h("div", { class: "meta" },
+      h("span", { class: `kind ${a.kind}` }, KIND[a.kind] ?? a.kind),
+      a.task ? h("button", { class: "tasklink", title: a.taskTitle ?? "", onclick: () => show(a.task) }, a.task) : a.goal ? h("span", { class: "mono" }, a.goal) : null,
+      a.holds > 1 ? h("span", { class: "holds" }, `holds up ${a.holds} tickets`) : null,
+      a.viaSous ? h("span", {}, "via sous chef") : null,
+      h("span", { style: { marginLeft: "auto" } }, `${ago(a.createdAt)} ago`),
+    ),
+    h("h3", {}, a.title),
+    a.body ? h("div", { class: "body" }, a.body) : null,
+    a.command ? h("div", { class: "cmd" }, a.command) : null,
+    (a.undo ?? []).length ? h("details", { class: "undo" }, h("summary", {}, `Can be undone: ${a.undo[0].summary}`), ...a.undo.map((u) => [u.steps?.length ? h("div", { class: "steps" }, u.steps.join("\n")) : null, u.note ? h("div", { style: { marginTop: "6px" } }, u.note) : null])) : isDecision && a.kind === "approval" ? h("div", { class: "undo", style: { marginTop: "8px", fontSize: "12.5px", color: "var(--red)" } }, "No automatic undo for this one.") : null,
+    a.options.length && !isDecision ? h("div", { class: "opts" }, a.options.map((o) => h("button", { class: `opt ${o === a.pick ? "pick" : ""}`, onclick: () => send(o) }, o, o === a.pick ? h("small", {}, a.viaSous ? "sous chef suggests" : "cook suggests") : null))) : null,
+    h("div", { class: "row" }, input,
+      isDecision
+        ? [h("button", { class: "btn go", onclick: () => decide("approve") }, a.kind === "land" ? "Land it" : "Approve"), h("button", { class: "btn no", onclick: () => decide("deny") }, a.kind === "land" ? "Not yet" : "Deny")]
+        : [a.kind === "access" ? h("button", { class: "btn", onclick: () => send(input.value.trim() || "Done. Try again.") }, "Done") : h("button", { class: "btn go", onclick: () => send(input.value) }, "Send")],
+    ),
+    a.kind === "approval" && a.command ? h("div", { class: "row", style: { marginTop: "4px" } }, h("button", { class: "btn quiet", title: "Approve, and never hold this exact command again", onclick: () => decide("approve", { always: true }) }, "Always allow this exact command")) : null,
+  );
+}
+function renderAsks(b) {
+  const focused = document.activeElement?.dataset?.draft;
+  $("inboxN").textContent = b.asks.length || "";
+  $("asks").replaceChildren(...(b.asks.length ? b.asks.map(renderAsk) : [h("div", { class: "empty" }, b.counts.withSous ? "The pass is clear. The sous chef is answering a cook's question." : b.tasks.length ? "The pass is clear. Cooks are working, or everything is done." : "Nothing here yet.")]));
+  if (focused) {
+    const el = document.querySelector(`[data-draft="${CSS.escape(focused)}"]`);
+    if (el) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }
+}
+
+// ---- comms
+const TALK = new Set(["msg", "ask", "answer", "approval", "report", "review", "plan", "goal"]);
+const FILTERS = { talk: (e) => TALK.has(e.type), guard: (e) => e.type === "guard" || e.type === "approval", all: () => true };
+const actor = (name) => {
+  const s = String(name);
+  const cls = s.startsWith("cook") ? "cook" : s === "sous" || s === "inspector" ? "sous" : s.startsWith("pass") ? "pass" : s;
+  const label = s.startsWith("cook:") ? s.slice(5) : s.startsWith("pass") ? "the pass" : s === "sous" ? "sous chef" : s;
+  return h("span", { class: `a ${cls}` }, label);
+};
+function renderFeed(b) {
+  $("filters").replaceChildren(...Object.keys(FILTERS).map((k) => h("button", { class: filter === k ? "on" : "", onclick: () => { filter = k; seen.feed = ""; render(); } }, k === "talk" ? "Talk" : k === "guard" ? "Pass" : "All")));
+  const list = b.feed.filter(FILTERS[filter]).slice(-60).reverse();
+  $("feed").replaceChildren(...(list.length ? list.map((e) => h("div", { class: `ev ev-${e.type}`, title: new Date(e.ts).toLocaleString(), onclick: e.task ? () => focusTask(e.task) : null }, h("time", {}, clock(e.ts)), h("div", {}, h("span", { class: "who" }, actor(e.from), " → ", actor(e.to)), " ", h("span", { class: "txt" }, e.text)))) : [h("div", { class: "empty" }, "Quiet so far.")]));
+}
+
+// ---- the flow: each goal is a lane, left to right is the order things must happen
+const CW = 224, CH = 92, GX = 44, GY = 14;
+const STATE = { needs_you: "At the pass", running: "Running", review: "In review", with_sous: "With sous chef", ready: "Next up", waiting: "Waiting", stuck: "Stuck upstream", done: "Done", failed: "Failed", paused: "Paused", blocked: "Resuming" };
+function layout(tasks) {
+  const cols = new Map();
+  for (const t of tasks) cols.set(t.rank, [...(cols.get(t.rank) ?? []), t]);
+  const pos = {};
+  let height = 0;
+  for (const rank of [...cols.keys()].sort((a, b) => a - b)) {
+    // Each card sits level with what it needs, when there is room.
+    const want = (t) => {
+      const ys = t.needs.filter((n) => pos[n]).map((n) => pos[n].y);
+      return ys.length ? ys.reduce((a, y) => a + y, 0) / ys.length : null;
+    };
+    const col = cols.get(rank).map((t) => ({ t, w: want(t) })).sort((a, b) => (a.w ?? 1e9) - (b.w ?? 1e9) || num(a.t.id) - num(b.t.id));
+    let y = 0;
+    for (const { t, w } of col) {
+      const top = Math.max(y, w ?? y);
+      pos[t.id] = { x: rank * (CW + GX), y: top };
+      y = top + CH + GY;
+    }
+    height = Math.max(height, y - GY);
+  }
+  const maxRank = Math.max(0, ...tasks.map((t) => t.rank));
+  return { pos, width: (maxRank + 1) * (CW + GX) - GX, height };
+}
+function renderGoal(g, tasks) {
+  const mine = tasks.filter((t) => t.goal === g.id);
+  const byId = Object.fromEntries(mine.map((t) => [t.id, t]));
+  const { pos, width, height } = layout(mine);
+  const lane = h("div", { class: "lane", style: { width: `${width}px`, height: `${height}px` } });
+  const art = svg("svg", { width, height });
+  const edges = [];
+  for (const t of mine)
+    for (const n of t.needs) {
+      if (!pos[n]) continue;
+      const x1 = pos[n].x + CW, y1 = pos[n].y + CH / 2, x2 = pos[t.id].x, y2 = pos[t.id].y + CH / 2, c = Math.max(24, (x2 - x1) / 2);
+      const path = svg("path", { class: `edge ${byId[n].state === "done" ? "met" : "open"}`, d: `M${x1} ${y1} C${x1 + c} ${y1} ${x2 - c} ${y2} ${x2} ${y2}` });
+      edges.push({ from: n, to: t.id, path });
+      art.append(path);
+    }
+  lane.append(art);
+  // Hovering a card lights up everything it waits for and everything waiting for it.
+  const reach = (id, dir) => {
+    const out = new Set();
+    const walk = (x) => edges.filter((e) => e[dir === "up" ? "to" : "from"] === x).forEach((e) => { const y = e[dir === "up" ? "from" : "to"]; if (!out.has(y)) { out.add(y); walk(y); } });
+    walk(id);
+    return out;
+  };
+  const cards = {};
+  for (const t of mine) {
+    const card = h(
+      "button", { class: `card ${t.state}`, "data-task": t.id, style: { left: `${pos[t.id].x}px`, top: `${pos[t.id].y}px` }, onclick: () => show(t.id), title: t.title },
+      h("div", { class: "top" }, h("span", { class: "id" }, t.id), h("span", { class: "pill" }, h("i"), t.state === "ready" && t.next ? `Next up · #${t.next}` : STATE[t.state] ?? t.state), t.attempt ? h("span", { title: "times sent back" }, `↺${t.attempt}`) : null, t.kind !== "build" ? h("span", { class: "kindtag" }, t.kind) : null),
+      h("div", { class: "title" }, t.title),
+      h("div", { class: "line" }, t.state === "done" && t.unreviewed ? "not reviewed · " : "", t.line),
+    );
+    card.addEventListener("mouseenter", () => {
+      const lit = new Set([t.id, ...reach(t.id, "up"), ...reach(t.id, "down")]);
+      lane.classList.add("focus");
+      for (const [id, el] of Object.entries(cards)) el.classList.toggle("hl", lit.has(id));
+      for (const e of edges) e.path.classList.toggle("hl", lit.has(e.from) && lit.has(e.to));
+    });
+    card.addEventListener("mouseleave", () => {
+      lane.classList.remove("focus");
+      for (const el of Object.values(cards)) el.classList.remove("hl");
+      for (const e of edges) e.path.classList.remove("hl");
+    });
+    cards[t.id] = card;
+    lane.append(card);
+  }
+  const label = g.status === "planning" ? "sous chef is planning" : g.status === "done" ? (g.pr ? "in a pull request" : g.landed ? "landed" : "complete") : g.status === "active" && g.total && g.done === g.total ? "finished · waiting to land" : g.status;
+  return h(
+    "section", { class: "goal" },
+    h("header", {},
+      h("span", { class: "gid" }, g.id), h("h2", {}, g.title), h("span", { class: "proj" }, g.project),
+      g.total ? h("span", { class: "meter" }, h("i", { style: { width: `${(100 * g.done) / g.total}%` } })) : null,
+      g.total ? h("span", { class: "count" }, `${g.done}/${g.total}`) : null,
+      label !== "active" ? h("span", { class: `state ${g.status}` }, label) : null,
+      g.pr ? h("a", { href: g.pr, target: "_blank", rel: "noopener", style: { color: "var(--blue)", fontSize: "12px" } }, "open PR") : null,
+      h("button", { class: "btn quiet", style: { height: "24px", padding: "0 8px", fontSize: "12px" }, onclick: () => show(g.id) }, "details"),
+    ),
+    mine.length ? lane : h("div", { class: "empty" }, g.status === "planning" ? "Tickets appear here once the plan is in." : "No tickets."),
+  );
+}
+function renderFlow(b) {
+  const keep = $("goalText")?.value ?? "";
+  const projects = b.projects;
+  const text = h("textarea", { id: "goalText", placeholder: projects.length ? "What do you want done? Say it in your own words…" : "Add a project first:  oui project add <path>", disabled: !projects.length }, keep);
+  const pick = projects.length > 1 ? h("select", { id: "goalProject" }, projects.map((p) => h("option", { value: p.id }, p.name))) : null;
+  const go = () => {
+    if (!text.value.trim()) return text.focus();
+    rpc("go", { text: text.value.trim(), project: pick?.value ?? projects[0]?.id }).then(() => (text.value = ""));
+  };
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
+  const live = b.goals.filter((g) => g.status !== "cancelled");
+  $("flow").replaceChildren(
+    h("div", { class: "composer" }, text, pick, h("button", { class: "btn go", onclick: go, disabled: !projects.length }, "Fire")),
+    ...(live.length ? live.map((g) => renderGoal(g, b.tasks)) : [h("div", { class: "empty" }, "No goals yet. Fire one above, or from a terminal:  oui go \"…\"")]),
+  );
+}
+function focusTask(id) {
+  const el = document.querySelector(`[data-task="${CSS.escape(id)}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  el.animate([{ boxShadow: "0 0 0 3px var(--amber)" }, { boxShadow: "0 0 0 3px transparent" }], { duration: 1400 });
+}
+
+// ---- drawer: one ticket or goal in full
+async function show(id) {
+  open = id;
+  await drawDrawer();
+}
+async function drawDrawer() {
+  const d = $("drawer");
+  if (!open) return (d.hidden = true);
+  const r = await fetch(`/api/show?id=${encodeURIComponent(open)}`).then((x) => x.json());
+  if (r.error) return (d.hidden = true);
+  const close = h("button", { class: "btn quiet", onclick: () => { open = null; d.hidden = true; } }, "Close");
+  const act = (label, method, cls) => h("button", { class: `btn ${cls ?? ""}`, onclick: () => rpc(method, { id: open }).then(drawDrawer) }, label);
+  let body;
+  if (r.kind === "ticket") {
+    const t = r.task;
+    const card = board?.tasks.find((x) => x.id === t.id);
+    const log = await fetch(`/api/log?ticket=${t.id}`).then((x) => x.json()).catch(() => ({ text: "" }));
+    body = [
+      h("header", {}, h("div", { style: { flex: 1 } }, h("div", { class: "mono", style: { color: "var(--faint)" } }, `${t.id} · ${t.kind} · ${STATE[card?.state] ?? t.status}${t.needs.length ? ` · after ${t.needs.join(", ")}` : ""}`), h("h2", {}, t.title)), close),
+      h("div", { class: "inner" },
+        h("div", { class: "acts" },
+          ["running", "blocked", "todo"].includes(t.status) ? act("Pause", "pause") : null,
+          t.status === "paused" ? act("Resume", "resume", "go") : null,
+          ["failed", "blocked", "done"].includes(t.status) ? act("Retry", "retry") : null,
+          !["done", "cancelled", "review"].includes(t.status) ? act("Accept as done", "accept") : null,
+          !["done", "cancelled"].includes(t.status) ? act("Cancel", "cancel", "no") : null,
+        ),
+        t.session ? h("p", { style: { marginTop: "10px", fontSize: "12.5px" } }, "Step into its conversation: ", h("code", {}, `oui takeover ${t.id}`)) : null,
+        h("h4", {}, "Brief"), h("p", {}, t.brief),
+        t.accept?.length ? [h("h4", {}, "Done when"), h("ul", {}, t.accept.map((a) => h("li", {}, a)))] : null,
+        t.report ? [h("h4", {}, "Report"), h("p", {}, t.report.summary), t.report.handoff ? h("p", {}, h("b", {}, "For the next ticket: "), t.report.handoff) : null, t.report.evidence ? h("p", {}, h("b", {}, "Evidence: "), t.report.evidence) : null] : null,
+        t.review ? [h("h4", {}, `Review · ${t.review.verdict === "pass" ? "passed" : "changes wanted"}`), h("p", {}, t.review.notes || "—")] : null,
+        t.failure ? [h("h4", {}, "Failure"), h("p", { style: { color: "var(--red)" } }, t.failure)] : null,
+        t.workdir ? [h("h4", {}, "Station"), h("p", { class: "mono" }, `${t.workdir}${t.branch ? `\n${t.branch}` : ""}`)] : null,
+        h("h4", {}, `Activity${t.turns ? ` · ${t.turns} turn${t.turns === 1 ? "" : "s"}${t.cost ? ` · $${t.cost.toFixed(2)}` : ""}` : ""}`), h("pre", { id: "log" }, log.text || "Not started yet."),
+      ),
+    ];
+  } else if (r.kind === "goal") {
+    const g = r.goal;
+    body = [
+      h("header", {}, h("div", { style: { flex: 1 } }, h("div", { class: "mono", style: { color: "var(--faint)" } }, `${g.id} · ${g.project} · ${g.status}`), h("h2", {}, g.title)), close),
+      h("div", { class: "inner" },
+        h("div", { class: "acts" }, g.status === "active" ? h("button", { class: "btn", onclick: () => rpc("goal.set", { id: g.id, status: "paused" }).then(drawDrawer) }, "Pause goal") : null, g.status === "paused" ? h("button", { class: "btn go", onclick: () => rpc("goal.set", { id: g.id, status: "active" }).then(drawDrawer) }, "Resume goal") : null, g.completedAt && g.status !== "done" ? h("button", { class: "btn go", onclick: () => rpc("land", { id: g.id }).then(drawDrawer) }, "Land now") : null, !["done", "cancelled"].includes(g.status) ? h("button", { class: "btn no", onclick: () => rpc("goal.set", { id: g.id, status: "cancelled" }).then(drawDrawer) }, "Cancel goal") : null),
+        h("h4", {}, "In your words"), h("p", {}, g.detail || g.title),
+        g.branch ? [h("h4", {}, "Branch"), h("p", { class: "mono" }, g.branch)] : null,
+        h("h4", {}, "Tickets"), h("ul", {}, r.tasks.map((t) => h("li", {}, `${t.id} ${t.title} — ${t.status}`))),
+      ),
+    ];
+  }
+  if (!body) return (d.hidden = true);
+  const scrollTop = d.querySelector(".inner")?.scrollTop ?? 0;
+  d.replaceChildren(...body.flat(Infinity).filter(Boolean));
+  d.hidden = false;
+  d.querySelector(".inner").scrollTop = scrollTop;
+  const pre = $("log");
+  if (pre) pre.scrollTop = pre.scrollHeight;
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && open) { open = null; $("drawer").hidden = true; } });
+
+// ---- redraw only what changed, so typing and scrolling are never interrupted
+function render() {
+  const b = board;
+  const key = { bar: JSON.stringify([b.counts, b.service]), asks: JSON.stringify(b.asks.map((a) => [a.id, a.title, a.holds, a.options])), flow: JSON.stringify([b.goals, b.tasks.map((t) => [t.id, t.state, t.line, t.next, t.attempt, t.needs, t.title]), b.projects.length]), feed: `${b.feed.at(-1)?.id}|${filter}` };
+  if (key.bar !== seen.bar) renderBar(b);
+  if (key.asks !== seen.asks) renderAsks(b);
+  if (key.flow !== seen.flow && document.activeElement?.id !== "goalText") renderFlow(b);
+  else if (key.flow !== seen.flow) key.flow = seen.flow; // redraw once the composer loses focus
+  if (key.feed !== seen.feed) renderFeed(b);
+  Object.assign(seen, key);
+}
+async function refresh() {
+  try {
+    board = await fetch("/api/board").then((r) => r.json());
+    render();
+    if (open) drawDrawer();
+  } catch {}
+}
+async function loop() {
+  await refresh();
+  for (;;) {
+    try {
+      const next = await fetch(`/api/board?since=${board?.rev ?? -1}&wait=20`).then((r) => r.json());
+      if (next.rev !== board?.rev) {
+        board = next;
+        render();
+        if (open) drawDrawer();
+      }
+    } catch {
+      $("expo").querySelector("span").textContent = "Oui Chef is not answering";
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
+document.addEventListener("focusout", (e) => e.target.id === "goalText" && board && setTimeout(render, 0));
+setInterval(() => { if (board) { seen.asks = ""; render(); } }, 30000); // keeps "3m ago" honest
+loop();
+</script>
+</body>
+</html>
