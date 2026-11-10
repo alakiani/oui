@@ -43,9 +43,16 @@ export function methods(kitchen, expo) {
     fail: [["cook", "chef"], (p, who) => kitchen.fail(p, who)],
     inbox: [["cook"], (p, who) => kitchen.inbox(p, who)],
     verdict: [["inspector", "chef"], (p, who) => kitchen.verdict(p, who)],
-    guard: [["cook", "sous", "inspector"], (p, who) => kitchen.guard(p, who)],
+    guard: [
+      ["cook", "sous", "inspector"],
+      (p, who) => {
+        if (who.role === "cook") expo.heard(who.task);
+        return kitchen.guard(p, who);
+      },
+    ],
     "guard.captured": [["cook", "sous", "inspector"], (p, who) => kitchen.guardCaptured(p, who)],
-    "hook.stop": [["cook", "sous", "inspector"], (p, who) => kitchen.hookStop(p, who)],
+    "hook.stop": [["cook", "sous", "inspector"], (p, who) => expo.stopHook(p, who)],
+    "station.closed": [["cook"], (p, who) => expo.stationClosed(p, who)],
     pause: [CHEF, (p) => expo.pause(p)],
     resume: [CHEF, (p) => expo.resume(p)],
     retry: [CHEF, (p) => expo.retry(p)],
@@ -159,6 +166,11 @@ export function createServer(kitchen, expo, onShutdown) {
         const result = await call(m, rest, t);
         if (m === "shutdown") setImmediate(onShutdown);
         return send(res, 200, { ok: true, result });
+      }
+      // A cook's terminal asking what to run. It proves itself with the one-time key it was started with.
+      if (req.method === "POST" && route === "/api/station") {
+        const body = JSON.parse((await readBody(req)) || "{}");
+        return send(res, 200, { ok: true, result: expo.station({ ticket: String(body.ticket ?? ""), key: String(body.key ?? "") }) });
       }
       if (req.method === "POST" && route === "/api/rpc") {
         const body = JSON.parse((await readBody(req)) || "{}");

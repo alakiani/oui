@@ -73,6 +73,8 @@ Their report:
 {{summary}}
 Evidence they gave: {{evidence}}
 
+{{actions}}
+
 Their work is on branch `{{branch}}` in `{{workdir}}`, cut from `{{base}}`. See it with `git diff {{base}}...{{branch}}` and `git log {{base}}..{{branch}}`.{{checks}}
 
 Check, in this order, and stop at the first real problem:

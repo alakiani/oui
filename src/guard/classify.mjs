@@ -6,6 +6,7 @@
 // would and catches the mistakes of an eager agent. It cannot stop a program
 // that hides what it does.
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -46,28 +47,47 @@ const READERS = new Set([
 
 // ---- helpers
 
+// One folder can be reached by more than one spelling: through a symlink, or on macOS
+// where /var is really /private/var. Paths are compared by where they really point.
+// A path that does not exist yet takes the real location of its nearest existing parent.
+export function real(p) {
+  let current = path.resolve(p);
+  const rest = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(current), ...rest.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return path.resolve(p);
+      rest.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 function resolvePath(ctx, p) {
   if (!p) return null;
   let s = p.replace(/^~(?=\/|$)/, os.homedir()).replace(/\$\{?HOME\}?/g, os.homedir());
   if (/[$`]/.test(s) || s.includes("$(…)")) return null; // depends on something only the shell knows
   s = s.replace(/[*?[].*$/, ""); // a glob: judge the folder it expands in
-  return path.resolve(ctx.cwd ?? "/", s || ".");
+  return real(path.resolve(ctx.cwd ?? "/", s || "."));
 }
 
 const within = (root, p) => p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
-const TMP = [os.tmpdir(), "/tmp", "/private/tmp", "/var/tmp"].map((p) => path.resolve(p));
+const TMP = [...new Set([os.tmpdir(), "/tmp", "/private/tmp", "/var/tmp"].flatMap((p) => [path.resolve(p), real(p)]))];
 
 function inWorkspace(ctx, abs) {
   if (!abs) return false;
-  return [...(ctx.roots ?? []).map((r) => path.resolve(r)), ...TMP].some((r) => within(r, abs));
+  const where = real(abs);
+  return [...(ctx.roots ?? []), ...TMP].some((r) => within(r, where));
 }
 
 // A path whose loss would be a disaster wherever the agent is working.
 function isRootish(ctx, abs) {
   if (!abs) return true;
-  const homeDir = path.resolve(os.homedir());
+  const homeDir = real(os.homedir());
   if (abs === "/" || abs === homeDir || within(abs, homeDir)) return true;
-  if ((ctx.roots ?? []).some((r) => abs !== path.resolve(r) && within(abs, path.resolve(r)))) return true; // a parent of the station
+  if ((ctx.roots ?? []).some((r) => abs !== r && within(abs, r))) return true; // a parent of the station
   return abs.split(path.sep).filter(Boolean).length <= 1 && !TMP.includes(abs);
 }
 
@@ -89,7 +109,7 @@ function git(argv, ctx) {
   let rest = argv.slice(1);
   while (rest.length && rest[0].startsWith("-")) {
     const flag = rest.shift();
-    if (flag === "-C") cwd = path.resolve(cwd ?? "/", rest.shift() ?? ".");
+    if (flag === "-C") cwd = real(path.resolve(cwd ?? "/", rest.shift() ?? "."));
     else if (["-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"].includes(flag)) rest.shift();
   }
   const verb = rest[0];
@@ -649,15 +669,16 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function isControlPath(ctx, abs) {
   if (!ctx.home || !abs) return false;
-  const root = path.resolve(ctx.home);
-  return within(root, abs) && CONTROL_REL.test(path.relative(root, abs).split(path.sep).join("/"));
+  const root = real(ctx.home);
+  const where = real(abs);
+  return within(root, where) && CONTROL_REL.test(path.relative(root, where).split(path.sep).join("/"));
 }
 
 function tamper(text, ctx) {
   if (!ctx.role || ctx.role === "chef") return null;
   const deny = (why) => make(ctx, "oui.tamper", why);
   // The home, however it is spelled: its real path, $OUI_HOME, or the default under ~.
-  const homes = [...(ctx.home ? [escapeRe(path.resolve(ctx.home))] : []), String.raw`\$\{?OUI_HOME\}?`, String.raw`(?:~|\$\{?HOME\}?)/\.ouichef`].join("|");
+  const homes = [...(ctx.home ? [...new Set([path.resolve(ctx.home), real(ctx.home)])].map(escapeRe) : []), String.raw`\$\{?OUI_HOME\}?`, String.raw`(?:~|\$\{?HOME\}?)/\.ouichef`].join("|");
   if (new RegExp(`(?:${homes})/+${CONTROL}(?=$|[\\s'";|&)<>])`).test(text)) return deny("touches Oui Chef's control files");
   if (new RegExp(`\\b(?:cd|pushd)\\s+["']?(?:${homes})/?["']?(?=$|[\\s;&|])`).test(text) && CONTROL_BARE.test(text)) return deny("touches Oui Chef's control files");
   if (ctx.port && new RegExp(`(127\\.0\\.0\\.1|localhost|\\[::1\\]|0\\.0\\.0\\.0):${ctx.port}\\b`).test(text)) return deny("talks to the Oui Chef daemon directly instead of through oui");
@@ -767,7 +788,8 @@ function walk(text, ctx, out, depth) {
 }
 
 function withContext(ctx) {
-  return { cwd: process.cwd(), env: {}, roots: [], role: null, lookup: defaultLookup, protectedBranches: [], ...ctx, seq: { n: 0 } };
+  const full = { cwd: process.cwd(), env: {}, roots: [], role: null, lookup: defaultLookup, protectedBranches: [], ...ctx, seq: { n: 0 } };
+  return { ...full, cwd: real(full.cwd), roots: (full.roots ?? []).filter(Boolean).map(real) };
 }
 
 function settle(hits, ctx, command) {
@@ -818,7 +840,7 @@ export function classifyTool(tool, input, context) {
     if (!/^(get|list|search|read|fetch|view|query|find|describe|show|lookup|check|count|status|whoami|resolve|browse|inspect|preview)([_A-Z-]|$)/i.test(name)) hits.push(make(ctx, "mcp.call", `calls ${tool}`));
   }
   if (file && ctx.role && ctx.role !== "chef") {
-    const abs = path.resolve(ctx.cwd, String(file));
+    const abs = real(path.resolve(ctx.cwd, String(file)));
     if (isControlPath(ctx, abs)) hits.push(make(ctx, "oui.tamper", `${WRITERS.has(tool) ? "writes" : "reads"} ${path.basename(abs)}, one of Oui Chef's control files`));
     else if (WRITERS.has(tool) && !inWorkspace(ctx, abs)) hits.push(make(ctx, "fs.write.outside", `${tool} ${abs} is outside the cook's station`));
   }

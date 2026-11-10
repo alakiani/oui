@@ -482,7 +482,7 @@ async function drawDrawer() {
           !["done", "cancelled", "review"].includes(t.status) ? act("Accept as done", "accept") : null,
           !["done", "cancelled"].includes(t.status) ? act("Cancel", "cancel", "no") : null,
         ),
-        t.session ? h("p", { style: { marginTop: "10px", fontSize: "12.5px" } }, "Step into its conversation: ", h("code", {}, `oui takeover ${t.id}`)) : null,
+        t.session ? h("p", { style: { marginTop: "10px", fontSize: "12.5px" } }, card?.terminal ? `Running in a ${card.terminal.backend} terminal. Step in: ` : "Step into its conversation: ", h("code", {}, `oui takeover ${t.id}`)) : null,
         h("h4", {}, "Brief"), h("p", {}, t.brief),
         t.accept?.length ? [h("h4", {}, "Done when"), h("ul", {}, t.accept.map((a) => h("li", {}, a)))] : null,
         t.report ? [h("h4", {}, "Report"), h("p", {}, t.report.summary), t.report.handoff ? h("p", {}, h("b", {}, "For the next ticket: "), t.report.handoff) : null, t.report.evidence ? h("p", {}, h("b", {}, "Evidence: "), t.report.evidence) : null] : null,

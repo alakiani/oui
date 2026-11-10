@@ -29,7 +29,7 @@ you ── goal ─▶ sous chef ── tickets, with needs ─▶ expediter ─
 | **Chef** | You | Give goals, answer what only you can, approve what is risky |
 | **Sous chef** | A model, called for short judgement calls | Turns a goal into tickets; answers cooks' questions the goal already settles and passes the rest up, reworded |
 | **Inspector** | A model, read-only | Checks each finished build ticket against its brief before it merges |
-| **Cook** | One headless Claude Code session per ticket, at its own station (a git worktree) | Does the work, commits, reports |
+| **Cook** | One Claude Code session per ticket, at its own station (a git worktree): a terminal in Herdr or tmux, or headless | Does the work, commits, reports |
 | **Expediter** | Plain code, no model | Fires tickets in order, delivers answers, runs checks, merges, lands |
 | **The pass** | Plain code, a hook on every tool call | Lets it through, records it with an undo, holds it for you, or refuses |
 
@@ -43,7 +43,7 @@ Needs Node 20 or newer, git, and [Claude Code](https://code.claude.com) logged i
 git clone https://github.com/alakiani/oui.git
 cd oui
 npm link        # puts `oui` on your PATH
-npm test        # 33 tests; takes about 15 seconds
+npm test        # 38 tests; takes about 30 seconds
 ```
 
 There are no dependencies to install.
@@ -129,6 +129,26 @@ The plain words work everywhere. So do the kitchen's:
 | `oui 86 T4` | `oui cancel T4`: take a ticket off the board |
 | `oui service off` | nothing new is fired; turns in progress finish |
 
+## Where cooks run
+
+Oui Chef is Herdr-first and not tied to Herdr. `sessions` in `~/.ouichef/config.json` says where a cook's session lives:
+
+| `sessions` | Each cook is | What that gives you |
+|---|---|---|
+| `auto` (default) | `herdr` when herdr-core (`hc`) is installed, otherwise `none` | |
+| `herdr` | a [herdr-core](https://github.com/herdrdev/herdr-core) terminal: one Herdr space per goal, one tab per ticket | watch any cook, type to it, peek at it from the board; Herdr's sidebar, sounds and toasts; terminals that outlive the window and the daemon |
+| `tmux` | a window in one tmux session (`tmux attach -t oui`) | the same, in tmux |
+| `none` | a headless process under the daemon | the board and `oui tail` |
+
+In a terminal, a cook is an ordinary interactive agent session. Oui Chef does not read its screen to follow it. The agent's own hooks say when a tool is about to run (that is the pass) and when a turn ends, and answers are typed into the terminal. So you can step in at any time, with `oui takeover T4` or by clicking its tab, and type to the cook yourself. When it stops, the kitchen carries on from there.
+
+Two things to know:
+
+- A folder an agent has not seen makes it ask whether the folder is trusted. A cook's station is a worktree of a project you registered with `oui project add`, so Oui Chef answers that prompt for you. Register only projects you trust.
+- Stopping the daemon leaves cooks in terminals running. Nothing risky gets past the pass while it is down, and the next `oui up` picks them up.
+
+Another multiplexer is one file in `src/sessions/` with nine small functions: open a terminal, type into it, is it alive, close it, and so on. `herdr.mjs` and `tmux.mjs` are the examples.
+
 ## The pass
 
 Every tool call a cook makes crosses the pass before it runs. For shell commands it reads the command the way a careful person would: through pipes, `&&`, `$(…)`, `bash -c`, `sudo`, `xargs` and `ssh host '…'`.
@@ -165,7 +185,7 @@ herdr-app check ~/.config/herdr-app/mods/ouichef
 herdr-app do pane.split --direction right --mod ouichef
 ```
 
-The mod is a 360px panel: the pass on top with its buttons, then running, next up, waiting, done and the latest messages. Its header button opens a tab with every goal as a lane and connectors for what waits on what. See [`herdr/ouichef/RECIPE.md`](herdr/ouichef/RECIPE.md).
+The mod is a 360px panel in your Herdr theme: the pass on top, each ask with its buttons and a field to type an answer or a note, then running, next up, waiting, done and the latest messages. A new ask posts a Herdr toast and plays the needs-you sound. Clicking a ticket peeks at its cook's live terminal. The header button opens a tab with every goal as a lane and connectors for what waits on what. See [`herdr/ouichef/RECIPE.md`](herdr/ouichef/RECIPE.md).
 
 The mod has not been run inside Herdr yet; see "What was and was not verified" below. If `herdr-app check` reports a problem, give the agent in Herdr the recipe: it lists the five places a difference is most likely.
 
@@ -178,6 +198,7 @@ The same board is always available in a browser at the address `oui up` prints.
 | Key | Default | Meaning |
 |---|---|---|
 | `port` | `7330` | Where the daemon listens, on 127.0.0.1 only |
+| `sessions` | `auto` | Where cooks run: `auto`, `herdr`, `tmux` or `none` (see above) |
 | `maxCooks` | `3` | Cooks running at once, across all projects |
 | `model`, `sousModel` | harness default | Model for cooks, and for the sous chef's and inspector's short calls |
 | `calls.plan` / `calls.triage` / `calls.review` | `true` | Turn each judgement call off |
@@ -196,12 +217,13 @@ Set `OUI_HOME` to keep a second, separate kitchen.
 Verified, with real runs:
 
 - **The whole loop with real Claude Code agents**, on a scratch repository: a cook edited and committed, was held at the pass on a production `kubectl apply`, ended its turn, was resumed after approval, ran the command and reported; an inspector reviewed the diff read-only and passed it; the work was merged and landed. A real sous chef planned a one-sentence goal into ordered tickets.
-- **33 automated tests**: the dependency graph; the pass against about 200 commands and tool calls; every prompt rendered with nothing left blank; and the full loop with scripted cooks through the real hooks, CLI and git, including denial, a cook trying to approve itself, a cook that goes silent, failed checks, mid-plan landing, undo, and the daemon's access rules.
+- **Cooks in terminals**, with a real Claude Code cook in a tmux window: the terminal was opened, the trust prompt answered, the production command held at the pass, the approval typed into the terminal, the report filed, and the inspector's send-back typed in.
+- **38 automated tests**, run on Linux (including with the temp folder behind a symlink, as it is on macOS): the dependency graph; the pass against about 200 commands and tool calls; every prompt rendered with nothing left blank; and the full loop with scripted cooks through the real hooks, CLI and git, including denial, a cook trying to approve itself, a cook that goes silent, failed checks, mid-plan landing, undo, the daemon's access rules, and both session backends (tmux for real, Herdr against a stand-in `hc` that records every call).
 - **The web board** in Chromium: dark, light and phone width; answering, approving and firing a goal from the page.
 
 Not verified:
 
-- **The Herdr mod inside Herdr.** Herdr was not available where this was built. The mod uses only calls the Agenttrail mod uses, and its logic and actions are tested against a live daemon with Herdr's modules replaced by stand-ins. How Herdr draws it is unconfirmed.
+- **Anything inside real Herdr.** Herdr and herdr-core could not be run where this was built. The `herdr` sessions backend uses only documented `hc` commands (`run`, `send`, `get`, `kill`, `rm`, `read`, `keys`, `interrupt`), and is tested against a stand-in. Whether a goal's cooks land in one space as named tabs exactly as intended is unconfirmed. The mod is written against Herdr's published guide and type file and tested with Herdr's modules replaced by stand-ins; how Herdr draws it is unconfirmed.
 - **Real clusters and forges.** `kubectl`, `helm` and `gh` were stand-ins. The checkpoint and undo commands are the documented ones; they have not been run against a live cluster.
 - **`landing: pr`** (push and `gh pr create`), **`oui sous`** and **`oui takeover`** (interactive sessions) were not exercised end to end.
 - **Other agent CLIs.** Cooks are Claude Code. `src/harness/` is the one place to add another.
@@ -213,7 +235,8 @@ bin/oui.mjs                the command
 src/kitchen.mjs            all state and the rules for changing it
 src/expediter.mjs          fires, supervises, reviews, merges, lands
 src/guard/                 the pass: the command reader, the rules, checkpoints and undo
-src/harness/               Claude Code as cook; a scripted stand-in for tests and the demo
+src/sessions/              where cooks run: herdr-core, tmux (headless needs none)
+src/harness/               Claude Code as cook; scripted stand-ins for tests and the demo
 src/server.mjs             the loopback API
 src/board.mjs              the snapshot both boards draw
 prompts/                   what cooks, the sous chef and the inspector are told

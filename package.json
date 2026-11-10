@@ -1,6 +1,6 @@
 {
   "name": "ouichef",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "An orchestrator for coding agents, run like a kitchen: one board, tickets in dependency order, autonomous cooks, and a pass that holds anything risky for you.",
   "keywords": [
     "ai",

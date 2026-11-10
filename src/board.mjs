@@ -74,6 +74,7 @@ export function buildBoard(kitchen, running = new Map()) {
         pr: t.report?.pr ?? null,
         branch: t.branch ?? null,
         unreviewed: Boolean(t.unreviewed),
+        terminal: t.terminal && !t.terminal.gone ? { backend: t.terminal.backend, handle: t.terminal.handle } : null,
       };
     });
 
@@ -104,7 +105,7 @@ export function buildBoard(kitchen, running = new Map()) {
   return {
     rev: s.rev,
     now: Date.now(),
-    service: { on: s.service.on, running: running.size, max: kitchen.config.maxCooks, harness: kitchen.config.harness },
+    service: { on: s.service.on, running: running.size, max: kitchen.config.maxCooks, harness: kitchen.config.harness, sessions: kitchen.expo?.backend?.name ?? "none" },
     counts: {
       needsYou: asks.length,
       withSous: open.filter((a) => a.to === "sous").length,

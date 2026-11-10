@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
+import fs from "node:fs";
 import { classify, classifyTool } from "../src/guard/classify.mjs";
 import { DEFAULT_POLICY } from "../src/guard/policy.mjs";
 import { parseShell, unwrap } from "../src/guard/shell.mjs";
@@ -290,4 +291,26 @@ test("other tools: edits outside the station are held, control files are off lim
   assert.equal(classifyTool("mcp__slack__post_message", {}, ctx({ policy: { tiers: { "mcp.call": "hold" } } })).tier, 2);
   assert.equal(classifyTool("Bash", { command: "echo '{}' > /oui-home/policy.json" }, c).rule, "oui.tamper");
   assert.equal(classifyTool("Bash", { command: "terraform destroy" }, c).rule, "iac.apply");
+});
+
+test("a station reached through a symlink is still the cook's own (macOS /var is /private/var)", () => {
+  // Outside the temp folder on purpose: everything under it counts as scratch space anyway.
+  const base = fs.mkdtempSync(path.join(process.cwd(), ".oui-symlink-test-"));
+  try {
+    const realDir = path.join(base, "real");
+    const link = path.join(base, "link");
+    fs.mkdirSync(path.join(realDir, "station", "src"), { recursive: true });
+    fs.mkdirSync(path.join(realDir, "home", "tickets", "T3"), { recursive: true });
+    fs.symlinkSync(realDir, link);
+    // The kitchen names the station by one spelling; the agent's process reports the other.
+    const c = ctx({ ctx: { cwd: path.join(realDir, "station"), roots: [path.join(link, "station"), path.join(link, "home", "tickets", "T3")], home: path.join(link, "home") } });
+    assert.equal(classifyTool("Write", { file_path: path.join(realDir, "station", "src", "new-file.js") }, c).tier, 0, "writing in its own station");
+    assert.equal(classifyTool("Edit", { file_path: path.join(link, "station", "src", "x.js") }, c).tier, 0);
+    assert.equal(classify("rm -rf node_modules dist && git commit -qm wip", c).tier, 0, "routine work is still routine");
+    assert.equal(classifyTool("Write", { file_path: "/usr/local/oui-elsewhere.txt" }, c).rule, "fs.write.outside", "and outside is still outside");
+    assert.equal(classifyTool("Read", { file_path: path.join(realDir, "home", "daemon.json") }, c).rule, "oui.tamper", "control files are recognised by either spelling");
+    assert.equal(classify(`cat ${path.join(realDir, "home", "daemon.json")}`, c).rule, "oui.tamper");
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
 });

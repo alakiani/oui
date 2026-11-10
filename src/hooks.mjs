@@ -67,7 +67,7 @@ export async function pretool() {
 export async function stop() {
   const input = await stdin();
   try {
-    const res = await rpc("hook.stop", { active: Boolean(input.stop_hook_active) }, { timeoutMs: 8000 });
+    const res = await rpc("hook.stop", { active: Boolean(input.stop_hook_active), last: String(input.last_assistant_message ?? "").slice(0, 2000) }, { timeoutMs: 8000 });
     if (res.block) process.stdout.write(JSON.stringify({ decision: "block", reason: res.reason }));
   } catch {
     // A daemon that is down must never trap an agent in its turn.

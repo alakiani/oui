@@ -60,6 +60,7 @@ export const DEFAULT_CONFIG = {
   port: DEFAULT_PORT,
   maxCooks: 3, // cook running at once, across all projects
   harness: "claude", // "claude" | "stub"
+  sessions: "auto", // where cooks run: "auto" (Herdr if herdr-core is installed, else headless) | "herdr" | "tmux" | "none"
   model: null, // cook model; null = the harness default
   sousModel: null, // model for the first/inspector's short judgment calls
   calls: { triage: true, review: true, plan: true },

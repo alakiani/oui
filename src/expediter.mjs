@@ -16,6 +16,7 @@ import { Fail, clip, slug } from "./kitchen.mjs";
 import { quote } from "./guard/shell.mjs";
 import * as claude from "./harness/claude.mjs";
 import * as stub from "./harness/stub.mjs";
+import { resolve as resolveSessions } from "./sessions/index.mjs";
 
 const HARNESS = { claude, stub };
 const now = () => Date.now();
@@ -50,6 +51,8 @@ export class Expediter {
     this.roles = new Map(); // "kind:subject" -> promise
     this.reviewing = new Set();
     this.landing = new Set();
+    this.backend = resolveSessions(kitchen.config.sessions); // null: cooks run headless under this daemon
+    this.launches = new Map(); // ticket -> what its terminal should run, handed over once
     kitchen.expo = this;
     kitchen.onChange = () => this.kick();
     this.shim = this.#writeShim();
@@ -154,8 +157,17 @@ export class Expediter {
       if (task.status === "blocked" && task.kind !== "land" && on && !this.running.has(task.id) && !kitchen.openAsks(task.id).length && s.goals[task.goal]?.status === "active") {
         if (task.resumeAfter && task.resumeAfter > now()) continue;
         if (this.running.size >= kitchen.config.maxCooks) continue;
-        this.#startTurn(task, resumeMessage(task), true);
+        if (this.backend) this.#resumeTerminal(task);
+        else this.#startTurn(task, resumeMessage(task), true);
         dirty = true;
+      }
+      const turn = this.running.get(task.id);
+      if (turn?.terminal && task.terminal && !task.terminal.gone && now() - (turn.checkedAt ?? turn.startedAt) > 10000) {
+        turn.checkedAt = now();
+        const t = task.terminal;
+        this.backend?.alive(t.handle).then((alive) => {
+          if (!alive && task.terminal === t && this.running.get(task.id) === turn) this.#terminalGone(task, "its terminal was closed");
+        });
       }
       if (task.status === "review" && !this.reviewing.has(task.id)) {
         this.reviewing.add(task.id);
@@ -234,7 +246,8 @@ export class Expediter {
     const brief = cookBrief(kitchen, task);
     fs.writeFileSync(path.join(dir, "brief.md"), brief);
     kitchen.emit({ type: "system", from: "expediter", to: `cook:${task.id}`, task: task.id, goal: task.goal, text: `fired ${task.id} “${task.title}”` });
-    this.#startTurn(task, brief, false);
+    if (this.backend) this.#openTerminal(task, brief, false);
+    else this.#startTurn(task, brief, false);
   }
 
   #startTurn(task, prompt, resume) {
@@ -309,6 +322,145 @@ export class Expediter {
     };
     child.on("error", (e) => end(null, e));
     child.on("close", (code) => end(code, null));
+  }
+
+  // ---- cooks in terminals: the same agent, as an interactive session someone can watch and type into
+
+  #beginTurn(task) {
+    task.status = "running";
+    task.turns++;
+    task.turnStartedAt = now();
+    task.activeAt = now();
+    task.resumeAfter = null;
+    const turn = { terminal: true, startedAt: now(), lastText: "" };
+    this.running.set(task.id, turn);
+    return turn;
+  }
+
+  #openTerminal(task, prompt, resume) {
+    const { kitchen } = this;
+    const goal = kitchen.state.goals[task.goal];
+    const key = crypto.randomBytes(12).toString("hex");
+    this.launches.set(task.id, { key, prompt, resume });
+    const turn = this.#beginTurn(task);
+    this.log(task.id, `── turn ${task.turns} ${resume ? "resumed" : "started"} in a ${this.backend.name} terminal ──`);
+    if (resume) this.log(task.id, `  ⇠ ${clip(prompt.replace(/\s+/g, " "), 300)}`);
+    // The terminal runs a small launcher that asks the daemon what to start. Nothing secret is on its command line.
+    const argv = [process.execPath, OUI_BIN, "station", task.id, key, String(kitchen.port ?? "")];
+    this.backend.launch({ id: task.id, title: `${task.id} ${task.title}`, group: { id: goal.id, title: `${goal.id} ${goal.title}` }, cwd: task.workdir, argv }).then(
+      (handle) => {
+        task.terminal = { backend: this.backend.name, handle, openedAt: now(), live: false };
+        this.#settle(task, task.terminal);
+        kitchen.changed();
+      },
+      (e) => {
+        if (this.running.get(task.id) === turn) this.running.delete(task.id);
+        this.#hardFail(task, `Could not open a ${this.backend.name} terminal: ${e.message}`);
+      },
+    );
+  }
+
+  // A folder the agent has not seen makes it ask whether the folder is trusted, and the answer
+  // it offers is "no". Registering the project with `oui project add` was the chef's yes.
+  async #settle(task, terminal) {
+    for (let i = 0; i < 20 && !terminal.live && !terminal.gone && task.terminal === terminal; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const screen = await this.backend.read(terminal.handle).catch(() => "");
+      if (/trust this folder|project you created or one you trust/i.test(screen)) {
+        await this.backend.keys(terminal.handle, "down", "enter");
+        this.log(task.id, "  answered the agent's workspace trust prompt: the chef registered this project");
+        return;
+      }
+    }
+  }
+
+  // What the launcher in the terminal is told to run. The key works once.
+  station({ ticket, key }) {
+    const launch = this.launches.get(ticket);
+    if (!launch || !key || launch.key !== key) throw new Fail("That station key is not valid. It works once.", 403);
+    this.launches.delete(ticket);
+    const { kitchen } = this;
+    const task = kitchen.task(ticket);
+    const project = kitchen.state.projects[task.project];
+    const dir = kitchen.taskDir(task.id);
+    const run = this.harness.interactive({ kind: "cook", prompt: launch.prompt, session: task.session, resume: launch.resume, settings: this.writeSettings(dir, "cook"), system: cookContract(), addDirs: [dir], model: kitchen.config.model, label: `${task.id} ${task.title}`, stubKey: task.key ?? task.id });
+    const env = { OUI_HOME: home(), OUI_ROLE: "cook", OUI_TOKEN: kitchen.token("cook", task.id), OUI_PORT: String(kitchen.port ?? ""), OUI_TASK: task.id, OUI_GOAL: task.goal, OUI_ROOTS: JSON.stringify([task.workdir, dir]), OUI_PROTECTED: JSON.stringify([project.base, ...(project.protected ?? [])].filter(Boolean)), PATH: `${this.shim}${path.delimiter}${process.env.PATH ?? ""}`, ...run.env };
+    return { cmd: run.cmd, args: run.args, cwd: task.workdir, env };
+  }
+
+  // Any hook call from a cook means its session is up and past its startup screens.
+  heard(taskId) {
+    const t = this.kitchen.state.tasks[taskId]?.terminal;
+    if (t) t.live = true;
+  }
+
+  // In a terminal there is no process exit to mark the end of a turn. The agent's stop hook does.
+  stopHook(p, who) {
+    const res = this.kitchen.hookStop(p, who);
+    const task = who.role === "cook" ? this.kitchen.state.tasks[who.task] : null;
+    const turn = task ? this.running.get(task.id) : null;
+    if (task?.terminal) task.terminal.live = true;
+    if (turn?.terminal) {
+      turn.lastText = String(p.last ?? "");
+      if (turn.lastText) this.log(task.id, `  ${clip(turn.lastText.replace(/\s+/g, " "), 400)}`);
+      if (!res.block) this.#finishTurn(task, turn, null);
+    }
+    return res;
+  }
+
+  stationClosed({ code }, who) {
+    const task = this.kitchen.state.tasks[who.task];
+    if (task?.terminal && !task.terminal.gone) this.#terminalGone(task, `the agent exited${code ? ` with code ${code}` : ""}`);
+    return { ok: true };
+  }
+
+  #terminalGone(task, why) {
+    task.terminal.gone = true;
+    this.log(task.id, `  ${why}`);
+    const turn = this.running.get(task.id);
+    if (turn?.terminal) this.#finishTurn(task, turn, why);
+    else this.kitchen.changed();
+  }
+
+  #finishTurn(task, turn, lost) {
+    if (this.running.get(task.id) !== turn) return;
+    this.running.delete(task.id);
+    this.#onTurnEnd(task, { lastText: turn.lastText, result: lost ? null : { ok: true, cost: 0 }, stderr: lost ?? "" }, lost ? 1 : 0, null);
+  }
+
+  #resumeTerminal(task) {
+    const text = resumeMessage(task);
+    const terminal = task.terminal;
+    if (!terminal || terminal.gone) return this.#openTerminal(task, text, true);
+    const turn = this.#beginTurn(task);
+    this.log(task.id, `── turn ${task.turns} resumed ──`);
+    this.log(task.id, `  ⇠ ${clip(text.replace(/\s+/g, " "), 300)}`);
+    this.backend
+      .alive(terminal.handle)
+      .then((alive) => {
+        if (alive) return this.backend.send(terminal.handle, text);
+        // The terminal is gone but the conversation is on disk: open a new one on it.
+        terminal.gone = true;
+        this.running.delete(task.id);
+        task.turns--;
+        this.#openTerminal(task, text, true);
+      })
+      .catch((e) => {
+        if (this.running.get(task.id) === turn) this.running.delete(task.id);
+        task.status = "blocked";
+        task.inbox.unshift({ kind: "composed", text });
+        task.resumeAfter = now() + 15000;
+        this.log(task.id, `  could not type into the terminal (${clip(e.message, 160)}); trying again shortly`);
+        setTimeout(() => this.kick(), 15100).unref?.();
+        this.kitchen.changed();
+      });
+  }
+
+  #closeTerminal(task) {
+    const t = task.terminal;
+    if (!t || t.gone) return;
+    t.gone = true;
+    this.backend?.kill(t.handle);
   }
 
   #onEvent(task, turn, ev) {
@@ -451,6 +603,7 @@ export class Expediter {
       merged = res.ok && !res.empty;
       if (!res.ok && res.conflict) return this.#sendBack(task, `Your branch conflicts with \`${goal.branch}\` in ${res.files.join(", ")}: another ticket changed the same code and merged first. In your worktree run \`git merge ${goal.branch}\`, resolve the conflicts so both tickets' work survives, run the checks, commit, then run oui done again.`);
       if (!res.ok) return this.#hardFail(task, `Could not merge ${task.id} into ${goal.branch}: ${res.error}`);
+      this.#closeTerminal(task);
       gitx.removeWorktree(project.path, task.workdir);
     }
     task.status = "done";
@@ -458,6 +611,7 @@ export class Expediter {
     task.finishedAt = now();
     kitchen.withdrawAsks(task.id, "ticket finished");
     kitchen.emit({ type: "review", from: "expediter", to: "board", task: task.id, goal: task.goal, text: `${task.id} done${merged ? ` and merged into ${goal.branch}` : ""}${task.unreviewed ? " (not reviewed)" : ""}` });
+    this.#closeTerminal(task);
     this.log(task.id, "✓ done");
     kitchen.changed();
   }
@@ -611,8 +765,16 @@ export class Expediter {
 
   // ---- what the chef can do to a ticket or a goal
 
-  kill(taskId) {
-    this.running.get(taskId)?.child?.kill("SIGTERM");
+  // Stop a cook's current turn. A terminal session is interrupted, not closed, unless `close`.
+  kill(taskId, { close = false } = {}) {
+    const turn = this.running.get(taskId);
+    turn?.child?.kill("SIGTERM");
+    const task = this.kitchen.state.tasks[taskId];
+    if (turn?.terminal) {
+      this.running.delete(taskId);
+      if (!close && task?.terminal && !task.terminal.gone) this.backend?.interrupt(task.terminal.handle);
+    }
+    if (close && task) this.#closeTerminal(task);
   }
 
   act([verb, id], ask) {
@@ -666,7 +828,7 @@ export class Expediter {
 
   cancel({ id }) {
     const t = this.kitchen.task(id);
-    this.kill(id);
+    this.kill(id, { close: true });
     this.kitchen.withdrawAsks(id, "ticket cancelled");
     t.status = "cancelled";
     t.finishedAt = now();
@@ -694,6 +856,8 @@ export class Expediter {
   takeover({ id }) {
     const t = this.kitchen.task(id);
     if (!t.session) throw new Fail(`${id} has not started, so there is no conversation to open`);
+    // In a terminal the conversation is already open: step into it, and the cook carries on with you there.
+    if (t.terminal && !t.terminal.gone && this.backend) return { cwd: t.workdir, argv: this.backend.attach(t.terminal.handle), env: {}, terminal: true };
     if (["running", "blocked"].includes(t.status)) this.pause({ id });
     const settings = this.writeSettings(this.kitchen.taskDir(id), "cook");
     const project = this.kitchen.state.projects[t.project];
@@ -715,6 +879,7 @@ export class Expediter {
   stop() {
     this.stopped = true;
     clearInterval(this.timer);
-    for (const id of this.running.keys()) this.kill(id);
+    // Headless cooks stop with the daemon. Cooks in terminals stay: the next start picks them up.
+    for (const [id, turn] of this.running) if (!turn.terminal) this.kill(id);
   }
 }

@@ -295,6 +295,12 @@ const commands = {
     const id = ID(args[0]);
     if (!id) die("oui takeover <T>");
     const t = await chefRpc("takeover", { id });
+    if (t.terminal) {
+      // The cook is already in a terminal: step into that one. It carries on with you there.
+      if (!process.stdout.isTTY) return say(`Run:  ${t.argv.join(" ")}`);
+      spawnSync(t.argv[0], t.argv.slice(1), { stdio: "inherit" });
+      return;
+    }
     say(`${id} is paused. Opening its conversation in ${t.cwd} …`);
     if (!process.stdout.isTTY) return say(`Run:  cd ${t.cwd} && ${t.argv.join(" ")}\nThen: ${t.then}`);
     spawnSync(t.argv[0], t.argv.slice(1), { cwd: t.cwd, stdio: "inherit", env: { ...process.env, ...t.env } });
@@ -469,6 +475,19 @@ const commands = {
     if (!task || !["pass", "changes"].includes(verdict)) die('oui verdict <T> pass|changes --notes "<what you checked, or what must change>"');
     await rpc("verdict", { task: ID(task), verdict, notes: flags.notes ?? args.slice(2).join(" ") });
     say("Verdict recorded.");
+  },
+
+  // Runs inside a cook's terminal: asks the daemon what to start, runs it here, says when it ends.
+  async station(args) {
+    const [ticket, key, port] = args;
+    const res = await fetch(`http://127.0.0.1:${port}/api/station`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ticket, key }) })
+      .then((r) => r.json())
+      .catch((e) => ({ error: e.message }));
+    if (!res.ok) die(`This terminal could not start its cook: ${res.error ?? "the daemon did not answer"}`);
+    Object.assign(process.env, res.result.env);
+    const out = spawnSync(res.result.cmd, res.result.args, { cwd: res.result.cwd, stdio: "inherit", env: process.env });
+    await rpc("station.closed", { code: out.status ?? 1 }).catch(() => {});
+    process.exitCode = out.status ?? 0;
   },
 
   async hook(args) {

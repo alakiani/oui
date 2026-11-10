@@ -24,5 +24,10 @@ export function command(run) {
   };
 }
 
+export function interactive(run) {
+  const pass = Object.fromEntries(["OUI_STUB_SCRIPT", "OUI_STUB_REPO", "OUI_STUB_SPEED"].filter((k) => process.env[k]).map((k) => [k, process.env[k]]));
+  return { ...command(run), stdin: null, env: { ...command(run).env, ...pass, OUI_STUB_INTERACTIVE: "1", OUI_STUB_PROMPT: run.prompt } };
+}
+
 export const takeover = (session) => ["echo", `stub session ${session} has no terminal to open`];
 export const parse = parseClaude;

@@ -8,8 +8,8 @@
 // terminal running oui. See model.js for everything that is not drawing.
 
 import { View, div, svg, PathBuilder } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
-import { exec, focused, home, nextCommand, panes, props, run, settings, spaces } from "herdr";
+import { h_flex, v_flex, InputState, Input } from "gpui-base";
+import { exec, focused, home, nextCommand, notify, panes, playSound, props, readTextFile, run, settings, spaces, terminals, theme } from "herdr";
 import { CARD_H, DEFAULT_HOME, KIND, POLL_MS, STATE, TIMEOUT_MS, WIDE, actionUrl, ago, boardUrl, clean, lanes, parseDaemon, sections } from "./model.js";
 
 const MOD = "ouichef";
@@ -21,6 +21,20 @@ const RENDER_BUDGET_MS = 26;
 
 const DARK = { bg: "#0e1116", panel: "#151a22", raised: "#1b222c", hover: "#232c39", line: "#29323f", text: "#e7ebf1", dim: "#9ca7b7", faint: "#67727f", amber: "#f2a93b", amberBg: "#f2a93b22", amberInk: "#1a1305", blue: "#62a9ff", teal: "#40cdb1", violet: "#ab98f8", green: "#5ab884", red: "#f0716a", redBg: "#f0716a22", blueBg: "#62a9ff22" };
 const LIGHT = { bg: "#f4f5f7", panel: "#ffffff", raised: "#f1f3f6", hover: "#e6eaf0", line: "#dbe0e8", text: "#151a23", dim: "#566174", faint: "#8b95a4", amber: "#b06500", amberBg: "#b0650018", amberInk: "#ffffff", blue: "#1d6cd3", teal: "#0c8a73", violet: "#6851d0", green: "#2c8251", red: "#c5403a", redBg: "#c5403a18", blueBg: "#1d6cd318" };
+// The person's Herdr theme, by the roles this view needs, so it follows whatever look they chose.
+// Oui Chef's own colours stand in for any name a theme does not have.
+const tint = (hex, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(hex ?? "") ? `${hex}${alpha}` : fallback);
+function paint(t, light) {
+  const d = light ? LIGHT : DARK;
+  const pick = (name, fallback) => (typeof t?.[name] === "string" && t[name] ? t[name] : fallback);
+  const amber = pick("blocked", d.amber), blue = pick("working", d.blue), red = pick("ansi1", d.red);
+  return {
+    bg: pick("chrome", d.bg), panel: pick("surface", d.panel), raised: pick("raised", d.raised), hover: pick("hover", d.hover), line: pick("border", d.line),
+    text: pick("foreground", d.text), dim: pick("muted", d.dim), faint: pick("dim", d.faint),
+    amber, amberBg: tint(amber, "22", d.amberBg), amberInk: pick("background", d.amberInk), blue, blueBg: tint(blue, "22", d.blueBg),
+    teal: pick("accent", d.teal), violet: pick("ansi5", d.violet), green: pick("done", d.green), red, redBg: tint(red, "22", d.redBg),
+  };
+}
 const tone = (c, state) => ({ needs_you: c.amber, running: c.blue, blocked: c.blue, review: c.violet, with_sous: c.violet, ready: c.teal, done: c.green, failed: c.red, stuck: c.red })[state] ?? c.faint;
 const who = (c, name) => (name.startsWith("cook") ? c.blue : name === "sous" || name === "inspector" ? c.violet : name === "chef" ? c.amber : name.startsWith("pass") ? c.red : c.faint);
 const short = (name) => (name.startsWith("cook:") ? name.slice(5) : name.startsWith("pass") ? "the pass" : name === "sous" ? "sous chef" : name);
@@ -38,12 +52,13 @@ export default class OuiChef extends View {
     this.misses = 0;
     this.waiting = false; // a board request is still unanswered
     this.sent = new Set(); // asks already decided here, hidden until the board catches up
+    this.inputs = new Map(); // ask id -> its text field, kept between redraws so typing is never lost
+    this.known = null; // the asks seen so far, to notice a new one
     this.starting = false;
     this.error = null;
     cx.spawn(async (cx) => {
-      this.sleep = (ms) => cx.sleep(ms);
       for (;;) {
-        const changed = await this.tick();
+        const changed = await this.tick(cx);
         // Ages ("3m") move with the clock, so a live board redraws at the poll rate.
         if (changed || this.state === "live") cx.notify();
         await Promise.race([cx.sleep(POLL_MS), new Promise((wake) => { this.wake = wake; })]);
@@ -64,18 +79,23 @@ export default class OuiChef extends View {
   // ---- talking to the daemon
 
   async readDaemon() {
-    const res = await exec("cat", [`${this.homeDir}/daemon.json`], { cwd: home() });
-    return res.code === 0 ? parseDaemon(res.stdout) : null;
+    const file = `${this.homeDir}/daemon.json`;
+    let text = await readTextFile(file).catch(() => null);
+    if (text == null) {
+      const res = await exec("cat", [file], { cwd: home() }).catch(() => null);
+      text = res?.code === 0 ? res.stdout : null;
+    }
+    return text ? parseDaemon(text) : null;
   }
 
   // One request at a time, with a deadline: a fetch that never answers must not pile more up behind it.
-  async get(url) {
+  async get(url, cx) {
     if (!url) return null;
     const answer = fetch(url).then((res) => (res.ok ? res.json() : null)).catch(() => null);
-    return Promise.race([answer, this.sleep(TIMEOUT_MS).then(() => null)]);
+    return Promise.race([answer, cx.sleep(TIMEOUT_MS).then(() => null)]);
   }
 
-  async tick() {
+  async tick(cx) {
     const before = `${this.state}|${this.board?.rev}`;
     if (!this.daemon || this.misses > 0) this.daemon = await this.readDaemon();
     if (!this.daemon) {
@@ -83,7 +103,7 @@ export default class OuiChef extends View {
       this.board = null;
     } else if (!this.waiting) {
       this.waiting = true;
-      const reply = clean(await this.get(boardUrl(this.daemon)));
+      const reply = clean(await this.get(boardUrl(this.daemon), cx));
       this.waiting = false;
       if (reply) {
         this.misses = 0;
@@ -91,6 +111,7 @@ export default class OuiChef extends View {
         this.state = "live";
         this.starting = false;
         for (const id of [...this.sent]) if (!reply.asks.some((a) => a.id === id)) this.sent.delete(id);
+        this.announce(reply);
       } else if (++this.misses >= 2 || !this.board) {
         this.state = "stopped";
         this.board = null;
@@ -107,7 +128,7 @@ export default class OuiChef extends View {
     this.error = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      const res = await this.get(url);
+      const res = await this.get(url, cx);
       if (!res || res.ok === false) {
         if (params.id) this.sent.delete(params.id);
         this.error = res?.error ?? "Oui Chef did not answer. Nothing was changed.";
@@ -117,7 +138,52 @@ export default class OuiChef extends View {
     });
   }
 
-  // Things that need typing, or are easier read in a terminal, open one.
+  // Something new on the pass: say so the Herdr way, with a toast and the "needs you" sound.
+  announce(board) {
+    const ids = new Set(board.asks.map((a) => a.id));
+    const fresh = this.known ? board.asks.filter((a) => !this.known.has(a.id)) : [];
+    if (fresh.length) {
+      const a = fresh[0];
+      const terminal = a.task ? this.terminalOf(a.task) : null;
+      notify({ title: fresh.length === 1 ? `${a.task || a.goal || "Oui Chef"} is at the pass` : `${fresh.length} new on the pass`, body: a.title, level: "warning", ...(terminal ? { action: { name: "terminal.peek", args: { terminal } } } : {}) });
+      playSound("blocked");
+    }
+    this.known = ids;
+    for (const id of [...this.inputs.keys()]) if (!ids.has(id)) this.inputs.delete(id);
+  }
+
+  // The Herdr address of a cook's terminal, found by the label Oui Chef starts it with.
+  terminalOf(ticket) {
+    const mine = (t) => (Array.isArray(t?.labels) ? t.labels.includes(`oui.ticket=${ticket}`) : t?.labels?.["oui.ticket"] === ticket);
+    const found = (terminals() ?? []).find((t) => mine(t) && t.state !== "finished");
+    return typeof found?.address === "string" ? found.address : null;
+  }
+
+  // A ticket opens its cook: a peek at its live terminal when Herdr has one, else its activity log.
+  open(id) {
+    const terminal = this.terminalOf(id);
+    if (terminal) return run("terminal.peek", { terminal });
+    return this.terminal(["tail", id, "-f"], `${id} activity`);
+  }
+
+  field(a) {
+    let state = this.inputs.get(a.id);
+    if (!state) {
+      state = InputState.new({ value: "" });
+      state.on("submit", (_e, cx) => this.reply(a, "yes", cx));
+      this.inputs.set(a.id, state);
+    }
+    return state;
+  }
+
+  // What was typed is the answer to a question, or the note that goes with a decision.
+  reply(a, verdict, cx) {
+    const text = String(this.inputs.get(a.id)?.value() ?? "").trim();
+    if (a.kind === "approval" || a.kind === "land") return this.act(verdict === "no" ? "deny" : "approve", { id: a.id, note: text }, cx);
+    if (text) this.act("answer", { id: a.id, text }, cx);
+  }
+
+  // Things easier read in a terminal open one.
   terminal(args, name) {
     const d = this.daemon;
     if (!d?.node || !d?.oui) return;
@@ -187,19 +253,20 @@ export default class OuiChef extends View {
           .hover((s) => s.border_color(c.amber)).on_click(answer(o))
           .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.text).child(o))
           .when(o === a.pick, (e2) => e2.child(div().flex_none().text_size(10.5).font_weight(600).text_color(c.amber).child("suggested")))))))
-      .child(h_flex().mt(4).gap(6).items_center()
+      .child(Input.new(this.field(a)).mt(4).h(30).px(8).rounded(7).border(1).border_color(c.line).bg(c.panel).text_size(12.5).text_color(c.text))
+      .child(h_flex().gap(6).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(c.faint).child(decision ? "A note for the cook, if you like" : "Your answer, then Enter"))
         .when(decision, (el) => el
-          .child(this.button(c, `ask-${a.id}-yes`, a.kind === "land" ? "Land it" : "Approve", (_e, cx) => this.act("approve", { id: a.id }, cx), "go"))
-          .child(this.button(c, `ask-${a.id}-no`, a.kind === "land" ? "Not yet" : "Deny", (_e, cx) => this.act("deny", { id: a.id }, cx), "no")))
+          .child(this.button(c, `ask-${a.id}-yes`, a.kind === "land" ? "Land it" : "Approve", (_e, cx) => this.reply(a, "yes", cx), "go"))
+          .child(this.button(c, `ask-${a.id}-no`, a.kind === "land" ? "Not yet" : "Deny", (_e, cx) => this.reply(a, "no", cx), "no")))
         .when(a.kind === "access", (el) => el.child(this.button(c, `ask-${a.id}-done`, "Done, try again", answer("Done. Try again."), "go")))
-        .child(div().flex_1().min_w(0))
-        .child(this.button(c, `ask-${a.id}-reply`, decision ? "With a note…" : "Reply…", () => this.terminal(["answer", a.id], `Answer ${a.id}`))));
+        .when(!decision, (el) => el.child(this.button(c, `ask-${a.id}-send`, "Send", (_e, cx) => this.reply(a, "yes", cx)))));
   }
 
   // One ticket as a single line: enough for a list.
   row(c, t, now, tail) {
     return h_flex().id(`row-${t.id}`).h(30).px(8).gap(8).items_center().rounded(7).flex_none().cursor_pointer().hover((s) => s.bg(c.hover))
-      .on_click(() => this.terminal(["tail", t.id, "-f"], `${t.id} activity`))
+      .on_click(() => this.open(t.id))
       .child(this.dot(c, t.state))
       .child(div().flex_none().w(26).text_size(11).text_color(c.faint).child(t.id))
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.state === "done" ? c.dim : c.text).child(t.title))
@@ -209,7 +276,7 @@ export default class OuiChef extends View {
   // The same ticket with its status line under it, for what is moving right now.
   rowWide(c, t, now) {
     return v_flex().id(`row-${t.id}`).px(8).py(6).gap(2).rounded(7).flex_none().cursor_pointer().hover((s) => s.bg(c.hover))
-      .on_click(() => this.terminal(["tail", t.id, "-f"], `${t.id} activity`))
+      .on_click(() => this.open(t.id))
       .child(h_flex().gap(8).items_center()
         .child(this.dot(c, t.state))
         .child(div().flex_none().w(26).text_size(11).text_color(c.faint).child(t.id))
@@ -264,7 +331,7 @@ export default class OuiChef extends View {
     return v_flex().id(`card-${t.id}`).absolute().left(x).top(y).w(w).h(CARD_H).px(9).py(7).gap(2).rounded(9).border(1).border_color(t.state === "needs_you" ? c.amber : c.line)
       .bg(t.state === "needs_you" ? c.amberBg : c.panel).cursor_pointer().hover((s) => s.border_color(color))
       .when(t.state === "waiting" || t.state === "paused", (el) => el.border_dashed())
-      .on_click(() => this.terminal(["tail", t.id, "-f"], `${t.id} activity`))
+      .on_click(() => this.open(t.id))
       .child(h_flex().gap(6).items_center().text_size(10.5)
         .child(div().flex_none().text_color(c.faint).child(t.id))
         .child(this.dot(c, t.state, 6))
@@ -354,7 +421,7 @@ export default class OuiChef extends View {
 
   render() {
     this.t0 = Date.now();
-    const c = settings()?.dark === false ? LIGHT : DARK;
+    const c = paint(theme(), settings()?.dark === false);
     const b = this.state === "live" ? this.board : null;
     const now = Date.now();
     const isWide = (this.size?.width ?? 0) >= WIDE;

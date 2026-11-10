@@ -40,6 +40,19 @@ export function command(run) {
   return { cmd: BIN(), args, stdin: run.prompt, env: {} };
 }
 
+// The same cook as an interactive session in a terminal: watchable, and anyone can type into it.
+// No stream to read here; the hooks say when a tool is called and when a turn ends.
+export function interactive(run) {
+  const f = probe();
+  const args = ["--permission-mode", "acceptEdits", "--settings", run.settings, run.resume ? "--resume" : "--session-id", run.session];
+  if (run.system) args.push("--append-system-prompt", run.system);
+  if (run.model) args.push("--model", run.model);
+  if (run.label && f.name) args.push("--name", run.label);
+  if (run.addDirs?.length) args.push("--add-dir", ...run.addDirs);
+  args.push("--", run.prompt);
+  return { cmd: BIN(), args, env: {} };
+}
+
 // What the chef types to step into a cook's conversation.
 export function takeover(session) {
   return [BIN(), "--resume", session];

@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const write = (file, text, mode) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -148,8 +149,10 @@ export function makeDemo(dir, opts = {}) {
   git("commit", "-qm", "Initial commit");
   write(path.join(bin, "kubectl"), FAKE_KUBECTL, 0o755);
   write(path.join(bin, "gh"), FAKE_GH, 0o755);
+  // A stand-in herdr-core, so the "herdr" sessions backend can be exercised without Herdr.
+  if (opts.hc) write(path.join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${path.join(path.dirname(fileURLToPath(import.meta.url)), "harness", "stub-hc.mjs")}" "$@"\n`, 0o755);
   const script = path.join(dir, "scenario.json");
   write(script, JSON.stringify(opts.scenario ?? scenario({ slow: opts.slow ?? 1 }), null, 1));
-  write(path.join(home, "config.json"), JSON.stringify({ harness: "stub", port: opts.port ?? 7331, maxCooks: opts.maxCooks ?? 4, calls: { triage: true, review: true, plan: false }, ...(opts.config ?? {}) }, null, 1));
-  return { repo, home, script, env: { ...process.env, OUI_HOME: home, OUI_STUB_SCRIPT: script, OUI_PORT: "", OUI_TOKEN: "", OUI_ROLE: "", PATH: `${bin}${path.delimiter}${process.env.PATH}` } };
+  write(path.join(home, "config.json"), JSON.stringify({ harness: "stub", sessions: "none", port: opts.port ?? 7331, maxCooks: opts.maxCooks ?? 4, calls: { triage: true, review: true, plan: false }, ...(opts.config ?? {}) }, null, 1));
+  return { repo, home, script, env: { ...process.env, OUI_HOME: home, OUI_STUB_SCRIPT: script, OUI_STUB_HC_DIR: path.join(dir, "hc"), OUI_PORT: "", OUI_TOKEN: "", OUI_ROLE: "", PATH: `${bin}${path.delimiter}${process.env.PATH}` } };
 }

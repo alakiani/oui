@@ -68,7 +68,9 @@ export function cookBrief(kitchen, task) {
 
 // The message a parked cook is resumed with: decisions, answers and anything sent to it.
 export function resumeMessage(task) {
-  const items = mail(task.inbox.splice(0));
+  const waiting = task.inbox.splice(0);
+  if (waiting.length === 1 && waiting[0].kind === "composed") return waiting[0].text;
+  const items = mail(waiting);
   if (!items.length) return "Carry on with your ticket.";
   return `${items.join("\n\n")}\n\nCarry on. When the ticket is finished, report with oui done.`;
 }
@@ -107,7 +109,13 @@ export function rolePrompt(kind, kitchen, ctx) {
   }
   if (kind === "review") {
     const checks = [...(project.verify ?? []), ...(task.verify ?? [])];
+    // What the pass saw this cook do outside its station: Oui Chef's own record, so the inspector need not take the report's word for it.
+    const ran = kitchen.ledger.filter((a) => a.task === task.id && ["ran", "approved"].includes(a.decision));
+    const actions = ran.length
+      ? `Oui Chef's own record of what this cook ran outside its station (not the cook's claim; each of these did run):\n${ran.map((a) => `- ${a.id} ${a.decision === "approved" ? `ran with the chef's approval${a.ask ? ` (${a.ask})` : ""}` : "ran"}: ${a.command}`).join("\n")}`
+      : "Oui Chef recorded no commands outside the station for this ticket.";
     return fill(template, {
+      actions,
       ticket: task.id,
       title: task.title,
       brief: task.brief,

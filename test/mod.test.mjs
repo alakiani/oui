@@ -61,8 +61,16 @@ stub(
   globalThis.window = { paint_path: (p, color) => make("paint", color) };
   export const __make = make;`,
 );
-stub("gpui-base", `import { __make } from "gpui-kit"; export const h_flex = () => __make("h_flex"); export const v_flex = () => __make("v_flex");`);
-const host = (globalThis.__host = { runs: [], props: { home: demo.home }, dark: true, homeDir: dir });
+stub(
+  "gpui-base",
+  `import { __make } from "gpui-kit";
+  export const h_flex = () => __make("h_flex");
+  export const v_flex = () => __make("v_flex");
+  // A text field's state: the test types with set() and presses Enter with fire("submit").
+  export const InputState = { new: (opts) => { const st = { text: opts?.value ?? "", handlers: {}, on(name, fn) { st.handlers[name] = fn; }, value: () => st.text, set(v) { st.text = v; }, fire(name, cx) { st.handlers[name]?.({}, cx); }, focus() {} }; return st; } };
+  export const Input = { new: (state) => { const el = __make("input"); el.state = state; return el; } };`,
+);
+const host = (globalThis.__host = { runs: [], notes: [], sounds: [], terminals: [], props: { home: demo.home }, dark: true, homeDir: dir });
 stub(
   "herdr",
   `import { execFile } from "node:child_process";
@@ -79,7 +87,12 @@ stub(
   export const appHome = () => "/tmp";
   export const shared = () => null;
   export const setShared = () => {};
-  export const nextCommand = () => new Promise(() => {});`,
+  export const nextCommand = () => new Promise(() => {});
+  export const theme = () => ({ blocked: "#ffaa00", foreground: "#eeeeee" });
+  export const terminals = () => host.terminals;
+  export const notify = (n) => { host.notes.push(n); return "n1"; };
+  export const playSound = (name) => { host.sounds.push(name); return null; };
+  export const readTextFile = async (file) => { try { return (await import("node:fs")).readFileSync(file, "utf8"); } catch { return null; } };`,
 );
 
 const { default: OuiChef } = await import(pathToFileURL(path.join(modDir, "main.js")).href);
@@ -155,13 +168,15 @@ test("an approval shows its command and its undo, and Approve lets it run", asyn
   const s = draw(360);
   assert.ok(s.text.includes("$ kubectl --context prod-eu apply -f k8s/api.yaml -n shop"));
   assert.match(s.text, /Can be undone: Re-apply the manifests as they were before/);
-  s.el(`ask-${hold.id}-reply`).on.click({}, cx);
-  const [command, args] = host.runs.at(-1);
-  assert.equal(command, "terminal.open");
-  assert.deepEqual(args.argv.slice(2), ["answer", hold.id], "a note is typed in a terminal running oui answer");
-  assert.equal(args.argv[0], process.execPath, "oui is run by absolute path, not looked up on PATH");
+  // It arrived after the panel was already showing: Herdr is told, with the "needs you" sound.
+  assert.ok(host.notes.some((n) => n.body === hold.title && n.level === "warning"), "a new ask is announced with a toast");
+  assert.ok(host.sounds.includes("blocked"));
+  // A note is typed into the ask's own field, then Approve sends both.
+  const field = s.nodes.find((n) => n?.tag === "input" && view.inputs.get(hold.id) === n.state);
+  field.state.set("window is open until 18:00");
   s.el(`ask-${hold.id}-yes`).on.click({}, cx);
   await until("the approval to land", () => kitchen.state.asks[hold.id].status === "approved");
+  assert.equal(kitchen.state.asks[hold.id].note, "window is open until 18:00");
   await until("production to finish", () => kitchen.state.tasks[hold.task].status === "done");
 });
 
@@ -186,8 +201,15 @@ test("expand opens a tab with the wide view; a ticket opens its activity", () =>
   const s = draw(360);
   s.el("size").on.click({}, cx);
   assert.deepEqual(host.runs.at(-1), ["tab.new", { name: "Oui Chef", mod: "ouichef", props: { home: demo.home, expanded: true, from: "tab-1" } }]);
+  // A ticket with no terminal in Herdr opens its activity log, by absolute path so nothing depends on PATH.
   s.el("row-T5").on.click({}, cx);
   assert.deepEqual(host.runs.at(-1)[1].argv.slice(2), ["tail", "T5", "-f"]);
+  assert.equal(host.runs.at(-1)[1].argv[0], process.execPath);
+  // One whose cook runs in a Herdr terminal (found by its label) is peeked at instead.
+  host.terminals = [{ address: "t7", state: "live", labels: { "oui.ticket": "T5" } }];
+  s.el("row-T5").on.click({}, cx);
+  assert.deepEqual(host.runs.at(-1), ["terminal.peek", { terminal: "t7" }]);
+  host.terminals = [];
 });
 
 test("when the daemon stops, the panel says so and offers to start it", async () => {

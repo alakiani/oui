@@ -101,58 +101,80 @@ const state = (() => {
 })();
 const saveState = () => fs.writeFileSync(stateFile, JSON.stringify(state));
 
-let prompt = "";
-for await (const chunk of process.stdin) prompt += chunk;
+// One turn: play the script from where it stopped until something ends the turn.
+async function playTurn(prompt, active = false) {
+  const list = steps();
+  let turns = 0;
+  let last = "";
+  // A cook told "no" does not try that step a third time; it moves on.
+  const refusedAgain = /already said no|DENIED|said no to/i.test(prompt);
+  if (refusedAgain && list[state.at]?.run) state.at++;
 
-out({ type: "system", subtype: "init", session_id: session, model: "stub", cwd: process.cwd(), tools: ["Bash", "Write"] });
-const list = steps();
-let turns = 0;
-let last = "";
-// A cook told "no" does not try that step a third time; it moves on.
-const refusedAgain = /already said no|DENIED|said no to/i.test(prompt);
-if (refusedAgain && list[state.at]?.run) state.at++;
-
-for (; state.at < list.length; state.at++) {
-  const step = list[state.at];
-  if (step.sleep) await sleep(step.sleep / speed);
-  else if (step.say) {
-    last = fill(step.say);
-    out({ type: "assistant", session_id: session, parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "text", text: last }] } });
-  } else if (step.run || step.write) {
-    turns++;
-    const res = step.run
-      ? tool("Bash", { command: fill(step.run) }, () => {
-          const r = spawnSync("sh", ["-c", fill(step.run)], { encoding: "utf8", env, cwd: process.cwd() });
-          return { ok: r.status === 0, text: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().slice(0, 2000) };
-        })
-      : tool("Write", { file_path: path.resolve(fill(step.write)), content: step.content ?? "" }, () => {
-          const file = path.resolve(fill(step.write));
-          fs.mkdirSync(path.dirname(file), { recursive: true });
-          fs.writeFileSync(file, step.content ?? "");
-          return { ok: true, text: `Wrote ${file}` };
-        });
-    if (res.denied) {
-      // Held or refused: stop here. A hold is retried next turn; a refusal is skipped.
-      if (!/HELD/.test(res.text)) state.at++;
-      last = "I'll stop here until that is decided.";
+  for (; state.at < list.length; state.at++) {
+    const step = list[state.at];
+    if (step.sleep) await sleep(step.sleep / speed);
+    else if (step.say) {
+      last = fill(step.say);
       out({ type: "assistant", session_id: session, parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "text", text: last }] } });
-      break;
-    }
-    if (!res.ok && step.must) {
-      last = `Command failed: ${res.text.slice(0, 200)}`;
+    } else if (step.run || step.write) {
+      turns++;
+      const res = step.run
+        ? tool("Bash", { command: fill(step.run) }, () => {
+            const r = spawnSync("sh", ["-c", fill(step.run)], { encoding: "utf8", env, cwd: process.cwd() });
+            return { ok: r.status === 0, text: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().slice(0, 2000) };
+          })
+        : tool("Write", { file_path: path.resolve(fill(step.write)), content: step.content ?? "" }, () => {
+            const file = path.resolve(fill(step.write));
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(file, step.content ?? "");
+            return { ok: true, text: `Wrote ${file}` };
+          });
+      if (res.denied) {
+        // Held or refused: stop here. A hold is retried next turn; a refusal is skipped.
+        if (!/HELD/.test(res.text)) state.at++;
+        last = "I'll stop here until that is decided.";
+        out({ type: "assistant", session_id: session, parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "text", text: last }] } });
+        break;
+      }
+      if (!res.ok && step.must) {
+        last = `Command failed: ${res.text.slice(0, 200)}`;
+        state.at++;
+        break;
+      }
+    } else if (step.end) {
       state.at++;
       break;
     }
-  } else if (step.end) {
-    state.at++;
-    break;
   }
-}
-saveState();
+  saveState();
 
-const stop = hook("Stop", { stop_hook_active: false, last_assistant_message: last });
-if (stop?.decision === "block") {
-  out({ type: "user", session_id: session, parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: `Stop hook feedback: ${stop.reason}` }] } });
-  for (const step of scenario.onStopBlock?.[env.OUI_STUB_KEY] ?? []) if (step.run) tool("Bash", { command: fill(step.run) }, () => ({ ok: spawnSync("sh", ["-c", fill(step.run)], { encoding: "utf8", env }).status === 0, text: "" }));
+  const stop = hook("Stop", { stop_hook_active: active, last_assistant_message: last });
+  if (stop?.decision === "block") {
+    // Told not to stop yet: read why and carry on in the same turn, as a real agent does.
+    out({ type: "user", session_id: session, parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: `Stop hook feedback: ${stop.reason}` }] } });
+    return playTurn(stop.reason, true);
+  }
+  out({ type: "result", subtype: "success", is_error: false, session_id: session, result: last, num_turns: turns, total_cost_usd: 0, duration_ms: 0 });
 }
-out({ type: "result", subtype: "success", is_error: false, session_id: session, result: last, num_turns: turns, total_cost_usd: 0, duration_ms: 0 });
+
+out({ type: "system", subtype: "init", session_id: session, model: "stub", cwd: process.cwd(), tools: ["Bash", "Write"] });
+if (env.OUI_STUB_INTERACTIVE) {
+  // In a terminal: the first message came with the launch, the rest are typed in. One burst of input is one message.
+  let queue = playTurn(env.OUI_STUB_PROMPT ?? "");
+  let buffer = "";
+  let timer = null;
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const message = buffer;
+      buffer = "";
+      queue = queue.then(() => playTurn(message));
+    }, 250);
+  });
+  process.stdin.on("end", () => queue.then(() => process.exit(0)));
+} else {
+  let prompt = "";
+  for await (const chunk of process.stdin) prompt += chunk;
+  await playTurn(prompt);
+}

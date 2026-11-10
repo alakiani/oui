@@ -17,7 +17,8 @@ delete script.tasks.profile;
 // A cook that tries to approve its own held command, then does as it is told.
 script.tasks.sneaky = [{ run: "kubectl --context prod-eu delete deploy/api -n shop" }, { run: "oui approve A1" }, { run: "cat $OUI_HOME/daemon.json" }, { run: 'oui done --summary "Left production alone, as told."' }];
 // A cook that just stops talking.
-script.tasks.silent = [{ say: "Hm." }, { end: true }, { say: "Still thinking." }, { end: true }, { say: "…" }, { end: true }, { run: 'oui done --summary "Finally."' }];
+// Each turn it stops, is told to report, and stops again without doing so.
+script.tasks.silent = [...Array.from({ length: 6 }, () => [{ say: "Hm." }, { end: true }]).flat(), { run: 'oui done --summary "Finally."' }];
 // A cook whose first report does not pass the project's check.
 script.tasks.sloppy = [{ write: "broken.txt", content: "x\n" }, { run: 'git add -A && git commit -qm "wip"' }, { run: 'oui done --summary "Done, I think."' }, { end: true }, { run: 'git rm -q broken.txt && git commit -qm "fix"' }, { run: 'oui done --summary "Removed the file the check rejects."' }];
 

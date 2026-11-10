@@ -14,6 +14,7 @@ import { loadPolicy } from "./guard/policy.mjs";
 import { RULES, TIER_NAME, tierOf } from "./guard/rules.mjs";
 import { renderUndo, runUndo } from "./guard/undo.mjs";
 import { graphProblem } from "./graph.mjs";
+import { resumeMessage } from "./brief.mjs";
 
 const now = () => Date.now();
 export const clip = (s, n) => {
@@ -567,9 +568,13 @@ export class Kitchen {
   // The cook's Stop hook: a turn may end once there is a report, a failure or an open ask.
   hookStop({ active }, who) {
     const t = who.role === "cook" ? this.state.tasks[who.task] : null;
-    if (!t || active) return { block: false };
+    if (!t) return { block: false };
     const reported = t.report && t.report.at >= (t.turnStartedAt ?? 0);
-    if (reported || t.failure || this.openAsks(t.id).length) return { block: false };
+    if (reported || t.failure) return { block: false };
+    const waiting = this.openAsks(t.id).length > 0;
+    // A decision that arrived while the cook was still working is handed over here, in the same turn.
+    if (!waiting && t.inbox.some((m) => ["answer", "approved", "denied", "msg"].includes(m.kind))) return { block: true, reason: resumeMessage(t) };
+    if (active || waiting) return { block: false };
     return { block: true, reason: "You are ending your turn without reporting. If the ticket is finished: commit, then run oui done --summary \"...\". If you are stuck or need a decision: oui ask, oui need or oui fail. Otherwise keep working." };
   }
 
