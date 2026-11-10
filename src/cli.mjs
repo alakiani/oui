@@ -10,14 +10,15 @@ import { spawn, spawnSync } from "node:child_process";
 import { P, OUI_BIN, ROOT, ensureDir, home, loadConfig, readJson, writeJsonAtomic } from "./paths.mjs";
 import { alive, chefRpc, daemonInfo, get, rpc, up } from "./client.mjs";
 import { TIER_NAME } from "./guard/rules.mjs";
-import { PROMPTS, builtinPrompt, ownPrompt, promptFile, sousManual } from "./brief.mjs";
+import { PROMPTS, builtinPrompt, inspectors, ownPrompt, promptFile, sousManual } from "./brief.mjs";
 
 const HELP = `oui — Oui Chef: give the order, get asked only what is yours to decide.
 
   Start
     oui up                         start the kitchen (the board is at the address it prints)
-    oui project add <path>         register a repository or folder   [--name --landing local|pr --merge ask|auto --verify "<cmd>"]
+    oui project add <path>         register a repository or folder   [--name --landing local|pr --merge ask|auto --plan auto|ask --verify "<cmd>"]
     oui go "<goal>" [-p project]   hand over a goal; the sous chef writes the tickets and cooks start   (also: oui fire)
+                                   --plan ask: see the plan and say go before anything starts
     oui sous                       talk a goal through with the sous chef first
     oui plan <file|->              apply a plan (a goal and its tickets, with needs) as JSON
 
@@ -158,17 +159,17 @@ const commands = {
   async project(args, flags) {
     if (args[0] === "add") {
       if (!args[1]) die("oui project add <path>");
-      const p = await chefRpc("project.add", { path: path.resolve(args[1]), name: flags.name, base: flags.base, landing: flags.landing, merge: flags.merge, verify: flags.verify, maxCooks: flags["max-cooks"] ? Number(flags["max-cooks"]) : undefined, replace: flags.replace });
-      return say(`Added ${p.id}: ${p.path}${p.git ? `  (git, base ${p.base}, lands ${p.landing === "pr" ? "as a pull request" : "by local merge"}, merge: ${p.merge})` : "  (not a git repository: tickets run in the folder itself, one at a time)"}`);
+      const p = await chefRpc("project.add", { path: path.resolve(args[1]), name: flags.name, base: flags.base, landing: flags.landing, merge: flags.merge, plan: flags.plan, verify: flags.verify, maxCooks: flags["max-cooks"] ? Number(flags["max-cooks"]) : undefined, replace: flags.replace });
+      return say(`Added ${p.id}: ${p.path}${p.git ? `  (git, base ${p.base}, lands ${p.landing === "pr" ? "as a pull request" : "by local merge"}, merge: ${p.merge}${p.plan === "ask" ? ", plans wait for your go" : ""})` : "  (not a git repository: tickets run in the folder itself, one at a time)"}`);
     }
-    for (const p of await chefRpc("project.list")) say(`${p.id.padEnd(16)} ${p.path}  ${p.git ? `base ${p.base} · ${p.landing} · merge ${p.merge}` : "no git"}${p.verify?.length ? ` · checks: ${p.verify.join("; ")}` : ""}`);
+    for (const p of await chefRpc("project.list")) say(`${p.id.padEnd(16)} ${p.path}  ${p.git ? `base ${p.base} · ${p.landing} · merge ${p.merge}` : "no git"}${p.plan === "ask" ? " · plan ask" : ""}${p.verify?.length ? ` · checks: ${p.verify.join("; ")}` : ""}`);
   },
 
   async go(args, flags) {
     const text = args.join(" ").trim() || (process.stdin.isTTY ? "" : (await readStdin()).trim());
     if (!text) die('oui go "<what you want done>" [-p project]');
-    const res = await chefRpc("go", { text, project: flags.project, title: flags.title });
-    say(`${res.goal} is with the sous chef for planning (project ${res.project}). Watch it: oui status`);
+    const res = await chefRpc("go", { text, project: flags.project, title: flags.title, plan: flags.plan });
+    say(`${res.goal} is with the sous chef for planning (project ${res.project}). ${res.check ? "The plan will wait on the pass for your go." : "Watch it: oui status"}`);
   },
 
   async plan(args) {
@@ -209,6 +210,7 @@ const commands = {
     } else if (r.kind === "goal") {
       say(`${r.goal.id}  ${r.goal.title}   [${r.goal.status}]  project ${r.goal.project}${r.goal.branch ? ` · ${r.goal.branch}` : ""}${r.goal.pr ? ` · ${r.goal.pr}` : ""}`);
       if (r.goal.detail) say(`\n${r.goal.detail}\n`);
+      if (r.goal.note) say(`The plan: ${r.goal.note}\n`);
       for (const t of r.tasks) say(`  ${t.id.padEnd(4)} ${t.status.padEnd(9)} ${t.title}${t.needs.length ? `   after ${t.needs.join(", ")}` : ""}`);
     } else {
       printAsk(r.ask);
@@ -419,6 +421,8 @@ const commands = {
     if (args[0]) die("oui prompts   |   oui prompts copy <name>   |   oui prompts path");
     say(`What each agent is told. A file of the same name in ${P.prompts()} wins over the built-in one,\nand an edit is used from the next conversation, plan, review or cook on: no restart.\n`);
     for (const name of names) say(`  ${name.padEnd(11)} ${promptFile(name) === ownPrompt(name) ? "yours   " : "built-in"}  ${PROMPTS[name]}\n  ${"".padEnd(11)} ${promptFile(name)}`);
+    const named = inspectors().filter(Boolean);
+    say(`\nInspectors, one separate read of each finished build ticket: the built-in one (## review)${named.length ? `, and ${named.map((n) => `"${n}"`).join(", ")}` : ""}.\nAdd one by writing a section headed "## review: <name>" in your roles.md.`);
     say(`\nMake one yours:  oui prompts copy ${names[0].replace(/\.md$/, "")}`);
   },
 
@@ -509,7 +513,7 @@ const commands = {
   async verdict(args, flags) {
     const [task, verdict] = args;
     if (!task || !["pass", "changes"].includes(verdict)) die('oui verdict <T> pass|changes --notes "<what you checked, or what must change>"');
-    await rpc("verdict", { task: ID(task), verdict, notes: flags.notes ?? args.slice(2).join(" ") });
+    await rpc("verdict", { task: ID(task), verdict, notes: flags.notes ?? args.slice(2).join(" "), as: process.env.OUI_INSPECTOR || undefined });
     say("Verdict recorded.");
   },
 

@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { P, appendLine, ensureDir, home, loadConfig, readJson, writeJsonAtomic } from "./paths.mjs";
+import { P, appendLine, callSettings, ensureDir, home, loadConfig, readJson, writeJsonAtomic } from "./paths.mjs";
 import { loadPolicy } from "./guard/policy.mjs";
 import { RULES, TIER_NAME, tierOf } from "./guard/rules.mjs";
 import { renderUndo, runUndo } from "./guard/undo.mjs";
@@ -187,6 +187,7 @@ export class Kitchen {
       base: p.base ?? (isGit ? git(["rev-parse", "--abbrev-ref", "HEAD"]) || "main" : null),
       landing: p.landing ?? existing?.landing ?? (hasRemote ? "pr" : "local"), // how a finished goal reaches the base branch
       merge: p.merge ?? existing?.merge ?? "ask", // "ask": the chef approves each landing · "auto": lands when green
+      plan: p.plan ?? existing?.plan ?? "auto", // "auto": cooks start when the sous chef's plan is in · "ask": the chef sees the plan first
       verify: p.verify ?? existing?.verify ?? [], // commands every ticket in this project must pass
       maxCooks: p.maxCooks ?? existing?.maxCooks ?? 3,
       protected: p.protected ?? existing?.protected ?? [],
@@ -194,6 +195,7 @@ export class Kitchen {
     };
     if (!["local", "pr"].includes(project.landing)) throw new Fail("landing is local or pr");
     if (!["ask", "auto"].includes(project.merge)) throw new Fail("merge is ask or auto");
+    if (!["ask", "auto"].includes(project.plan)) throw new Fail("plan is ask or auto");
     this.state.projects[id] = project;
     this.changed();
     return project;
@@ -277,8 +279,12 @@ export class Kitchen {
       }
       const problem = graphProblem(Object.values(this.state.tasks));
       if (problem) throw new Fail(`This plan does not hold together: ${problem}`);
-      if (goal.status === "planning") goal.status = "active";
+      if (input.goal?.note) goal.note = clip(input.goal.note, 1200); // for the chef: how the work was cut, and what was assumed
+      // A plan the chef has not seen (the sous chef wrote it alone) waits for their go, when they asked to see plans first.
+      const check = goal.status === "planning" && who.role === "sous" && (goal.planCheck ?? this.state.projects[goal.project]?.plan) === "ask";
+      if (goal.status === "planning") goal.status = check ? "proposed" : "active";
       this.emit({ type: "plan", from: who.role === "chef" ? "chef" : "sous", to: "board", goal: goal.id, text: `Planned ${goal.id} “${goal.title}”: ${made.length} ticket${made.length === 1 ? "" : "s"}` });
+      if (check) goal.planAsk = this.#planAsk(goal, made.map(([t]) => t)).id;
       this.changed();
       return { goal: goal.id, tasks: made.map(([t]) => ({ id: t.id, key: t.key, title: t.title, needs: t.needs })) };
     } catch (e) {
@@ -288,15 +294,26 @@ export class Kitchen {
     }
   }
 
+  // The plan, put to the chef in one read: what there is to do, what waits on what, what was assumed.
+  #planAsk(goal, tickets) {
+    const lines = tickets.map((t) => {
+      const more = [t.kind === "decide" ? "a question for you" : t.kind === "build" ? "" : t.kind, t.needs.length ? `after ${t.needs.join(", ")}` : ""].filter(Boolean).join(", ");
+      return `${t.id}  ${t.title}${more ? `   (${more})` : ""}`;
+    });
+    const body = [goal.note, lines.join("\n"), "Nothing starts until you say so. In your own words: what to change, and the sous chef plans again with that."].filter(Boolean).join("\n\n");
+    return this.askCreate({ kind: "plan", goal: goal.id, from: "sous", to: "chef", title: `Cook ${goal.id} “${goal.title}” as planned?`, body, options: ["Cook it", "Cancel the goal"], on: { "Cook it": ["goal.cook", goal.id], "Cancel the goal": ["goal.cancel", goal.id], "*": ["goal.replan", goal.id] } }, { role: "sous" });
+  }
+
   // A goal in the chef's words. The sous chef turns it into tickets.
-  go({ text, project, title }, who) {
+  go({ text, project, title, plan }, who) {
     if (!String(text ?? "").trim()) throw new Fail("Say what you want done");
+    if (plan != null && !["ask", "auto"].includes(plan)) throw new Fail("plan is ask or auto");
     const proj = this.resolveProject(project);
-    const goal = { id: this.nextId("goal", "G"), title: clip(title ?? String(text).split("\n")[0], 120), detail: String(text).trim(), project: proj.id, status: "planning", createdAt: now(), by: who.role };
+    const goal = { id: this.nextId("goal", "G"), title: clip(title ?? String(text).split("\n")[0], 120), detail: String(text).trim(), project: proj.id, status: "planning", planCheck: plan ?? null, createdAt: now(), by: who.role };
     this.state.goals[goal.id] = goal;
     this.emit({ type: "goal", from: "chef", to: "sous", goal: goal.id, text: goal.detail });
     this.changed();
-    return { goal: goal.id, project: proj.id };
+    return { goal: goal.id, project: proj.id, check: (goal.planCheck ?? proj.plan) === "ask" };
   }
 
   taskAdd(spec, who) {
@@ -321,14 +338,14 @@ export class Kitchen {
   askCreate(p, who) {
     const taskId = who.role === "cook" ? who.task : p.task ?? who.task ?? null;
     const task = taskId ? this.task(taskId) : null;
-    const kind = ["question", "decision", "access", "approval", "review", "land", "stuck"].includes(p.kind) ? p.kind : "question";
+    const kind = ["question", "decision", "access", "approval", "review", "land", "plan", "stuck"].includes(p.kind) ? p.kind : "question";
     const title = clip(p.title, 240);
     if (!title) throw new Fail("An ask needs a question");
     const from = p.from ?? (who.role === "cook" ? `cook:${taskId}` : who.role);
     const dup = this.openAsks(taskId).find((a) => a.title === title && a.kind === kind);
     if (dup) return dup;
     // Questions go to the sous chef first, who answers what the brief and notes already settle.
-    const sousFirst = who.role === "cook" && (kind === "question" || kind === "decision") && this.config.calls?.triage && !p.direct;
+    const sousFirst = who.role === "cook" && (kind === "question" || kind === "decision") && callSettings(this.config, "triage").on && !p.direct;
     const ask = {
       id: this.nextId("ask", "A"),
       task: taskId,
@@ -395,6 +412,7 @@ export class Kitchen {
   askApprove({ id, note, always }, who) {
     const ask = this.ask(id);
     if (ask.status !== "open") throw new Fail(`${id} is already ${ask.status}`);
+    if (ask.kind === "plan") return this.askAnswer({ id, text: "Cook it" }, who); // approving a plan is saying yes to it
     if (ask.kind !== "approval" && ask.kind !== "land") throw new Fail(`${id} is a question: answer it instead`);
     Object.assign(ask, { status: "approved", by: who.role, note: note ? clip(note, 500) : null, resolvedAt: now() });
     this.emit({ type: "approval", from: "chef", to: ask.from, task: ask.task, goal: ask.goal, ask: id, text: `${id} approved${note ? ` — ${note}` : ""}` });
@@ -412,6 +430,11 @@ export class Kitchen {
     const ask = this.ask(id);
     if (ask.status !== "open") throw new Fail(`${id} is already ${ask.status}`);
     if (ask.task && this.state.tasks[ask.task]?.kind === "decide") throw new Fail(`${id} is a question: answer it, or drop it with oui 86 ${ask.task}`);
+    if (ask.kind === "plan") {
+      // Not this plan: the note is what to change, and the sous chef plans again with it.
+      if (!String(note ?? "").trim()) throw new Fail(`${id} is a plan: say what to change (oui deny ${id} --note "…"), or drop the goal with oui goal cancel ${ask.goal}`);
+      return this.askAnswer({ id, text: note }, who);
+    }
     Object.assign(ask, { status: "denied", by: who.role, note: note ? clip(note, 500) : null, resolvedAt: now() });
     this.emit({ type: "approval", from: "chef", to: ask.from, task: ask.task, goal: ask.goal, ask: id, text: `${id} denied${note ? ` — ${note}` : ""}` });
     if (ask.kind === "land" && ask.task) this.task(ask.task).status = "paused"; // not now: `oui resume` asks again
@@ -425,6 +448,11 @@ export class Kitchen {
 
   withdrawAsks(taskId, why) {
     for (const a of this.openAsks(taskId)) Object.assign(a, { status: "withdrawn", note: why, resolvedAt: now() });
+  }
+
+  // Asks about a goal as a whole (its plan, its landing) rather than about one of its tickets.
+  withdrawGoalAsks(goalId, why, kinds) {
+    for (const a of this.openAsks()) if (a.goal === goalId && !a.task && (!kinds || kinds.includes(a.kind))) Object.assign(a, { status: "withdrawn", note: why, resolvedAt: now() });
   }
 
   // ---- what cook say
@@ -485,11 +513,15 @@ export class Kitchen {
     return { items };
   }
 
-  verdict({ task, verdict, notes }, who) {
+  // `as` names the inspector when there is more than the built-in one ("" is the built-in).
+  verdict({ task, verdict, notes, as }, who) {
     const t = this.task(task ?? who.task);
     if (!["pass", "changes"].includes(verdict)) throw new Fail("verdict is pass or changes");
+    const name = clip(as, 60);
     t.review = { verdict, notes: clip(notes, 1500), by: who.role, at: now() };
-    this.emit({ type: "review", from: who.role, to: `cook:${t.id}`, task: t.id, goal: t.goal, text: verdict === "pass" ? `passed review${notes ? ` — ${clip(notes, 200)}` : ""}` : `changes wanted — ${clip(notes, 300)}` });
+    t.reviews = { ...(t.reviews ?? {}), [name]: t.review };
+    const which = name ? ` (${name})` : "";
+    this.emit({ type: "review", from: who.role, to: `cook:${t.id}`, task: t.id, goal: t.goal, text: verdict === "pass" ? `passed review${which}${notes ? ` — ${clip(notes, 200)}` : ""}` : `changes wanted${which} — ${clip(notes, 300)}` });
     this.changed();
     return { ok: true };
   }

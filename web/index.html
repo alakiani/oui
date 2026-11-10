@@ -280,7 +280,7 @@ function renderBar(b) {
 }
 
 // ---- the pass
-const KIND = { question: "Question", decision: "Decision", access: "Access", approval: "Approve", land: "Land", stuck: "Stuck" };
+const KIND = { question: "Question", decision: "Decision", access: "Access", approval: "Approve", land: "Land", plan: "Plan", stuck: "Stuck" };
 function renderAsk(a) {
   const input = h("input", { placeholder: a.kind === "access" ? "Tell the cook what you did…" : a.options.length ? "Or in your own words…" : "Your answer…", value: drafts[a.id] ?? "", "data-draft": a.id });
   input.addEventListener("input", () => (drafts[a.id] = input.value));
@@ -418,7 +418,7 @@ function renderGoal(g, tasks) {
     cards[t.id] = card;
     lane.append(card);
   }
-  const label = g.status === "planning" ? "sous chef is planning" : g.status === "done" ? (g.pr ? "in a pull request" : g.landed ? "landed" : "complete") : g.status === "active" && g.total && g.done === g.total ? "finished · waiting to land" : g.status;
+  const label = g.status === "planning" ? "sous chef is planning" : g.status === "proposed" ? "plan waiting for your go" : g.status === "unplanned" ? "no plan yet · needs you" : g.status === "done" ? (g.pr ? "in a pull request" : g.landed ? "landed" : "complete") : g.status === "active" && g.total && g.done === g.total ? "finished · waiting to land" : g.status;
   return h(
     "section", { class: "goal" },
     h("header", {},

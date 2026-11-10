@@ -684,7 +684,7 @@ function tamper(text, ctx) {
   if (new RegExp(`\\b(?:cd|pushd)\\s+["']?(?:${homes})/?["']?(?=$|[\\s;&|])`).test(text) && CONTROL_BARE.test(text)) return deny("touches Oui Chef's control files");
   if (new RegExp(`\\b(?:cd|pushd)\\s+["']?(?:${homes})/+prompts(?=$|[/\\s'";&|])`).test(text)) return deny("goes into the folder that holds what every agent is told");
   if (ctx.port && new RegExp(`(127\\.0\\.0\\.1|localhost|\\[::1\\]|0\\.0\\.0\\.0):${ctx.port}\\b`).test(text)) return deny("talks to the Oui Chef daemon directly instead of through oui");
-  if (/\bOUI_(TOKEN|ROLE|TASK|HOME|RUN|ROOTS|PROTECTED|PORT)\s*=|\bunset\s+OUI_|\bexport\s+OUI_/.test(text)) return deny("changes the identity Oui Chef gave this agent");
+  if (/\bOUI_(TOKEN|ROLE|TASK|HOME|RUN|ROOTS|PROTECTED|PORT|INSPECTOR)\s*=|\bunset\s+OUI_|\bexport\s+OUI_/.test(text)) return deny("changes the identity Oui Chef gave this agent");
   return null;
 }
 

@@ -7,7 +7,8 @@ import { clip } from "./kitchen.mjs";
 const FEED_TYPES = new Set(["msg", "ask", "answer", "approval", "report", "review", "guard", "plan", "goal", "system", "note"]);
 const REVIEW_STAGE = { verify: "running the checks", review: "inspector is reviewing", integrate: "merging into the goal branch" };
 
-function line(t, state, byId, open) {
+function line(t, state, byId, open, goal) {
+  if (state === "waiting" && goal?.status === "proposed") return "when you say to cook";
   if (state === "running") return t.note ?? t.lastTool?.detail ?? "starting…";
   // A question's title is the question itself, so its line says what is being waited for.
   if (state === "needs_you" && t.kind === "decide") return `your call${t.pick ? `; the plan would pick: ${t.pick}` : ""}`;
@@ -60,7 +61,7 @@ export function buildBoard(kitchen, running = new Map()) {
         title: t.title,
         kind: t.kind,
         state,
-        line: clip(line(t, state, byId, open), 160),
+        line: clip(line(t, state, byId, open, s.goals[t.goal]), 160),
         needs: t.needs,
         waitingOn: t.status === "todo" ? unmetNeeds(t, byId) : [],
         rank: rankOf[t.id] ?? 0,
@@ -100,7 +101,8 @@ export function buildBoard(kitchen, running = new Map()) {
       viaSous: Boolean(a.escalatedBy),
       createdAt: a.createdAt,
       // Tickets that cannot move until this is answered. A question in the plan is not work itself, so it does not count.
-      holds: heldUpBy(a.task, tasks, byId) - (byId.get(a.task)?.kind === "decide" ? 1 : 0),
+      // A plan waiting for the chef's go holds every ticket in it.
+      holds: a.kind === "plan" ? tasks.filter((t) => t.goal === a.goal && t.status === "todo" && t.kind !== "decide").length : heldUpBy(a.task, tasks, byId) - (byId.get(a.task)?.kind === "decide" ? 1 : 0),
     }))
     .sort((a, b) => b.holds - a.holds || a.createdAt - b.createdAt);
 
@@ -140,7 +142,7 @@ export function digest(board) {
     for (const a of board.asks) out.push(`  ${a.id} [${a.kind}] ${a.task ?? a.goal ?? ""} ${a.title}${a.holds > 1 ? `  (holds up ${a.holds} tickets)` : ""}${a.command ? `\n      $ ${clip(a.command, 200)}` : ""}${a.options?.length ? `\n      options: ${a.options.join(" | ")}${a.pick ? `   (asker would pick: ${a.pick})` : ""}` : ""}`);
   }
   for (const g of board.goals.filter((x) => x.status !== "done" && x.status !== "cancelled")) {
-    out.push("", `${g.id} ${g.title}  [${g.project}] ${g.done}/${g.total}${g.status !== "active" ? `  (${g.status})` : ""}`);
+    out.push("", `${g.id} ${g.title}  [${g.project}] ${g.done}/${g.total}${g.status !== "active" ? `  (${{ proposed: "the plan is waiting for your go", unplanned: "no plan yet: needs you" }[g.status] ?? g.status})` : ""}`);
     const mine = board.tasks.filter((t) => t.goal === g.id).sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id, undefined, { numeric: true }));
     for (const t of mine) out.push(`  ${t.id.padEnd(4)} ${({ needs_you: "at the pass", with_sous: "with sous" }[t.state] ?? t.state).padEnd(11)} ${clip(t.title, 60)}${t.state === "done" ? "" : ` — ${clip(t.line, 90)}`}`);
   }

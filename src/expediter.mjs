@@ -8,9 +8,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { P, OUI_BIN, ensureDir, home } from "./paths.mjs";
+import { P, OUI_BIN, callSettings, effortOf, ensureDir, home } from "./paths.mjs";
 import { startOrder } from "./graph.mjs";
-import { cookBrief, cookContract, resumeMessage, rolePrompt } from "./brief.mjs";
+import { cookBrief, cookContract, inspectors, resumeMessage, rolePrompt } from "./brief.mjs";
 import * as gitx from "./git.mjs";
 import { Fail, NO_COOK, clip, slug } from "./kitchen.mjs";
 import { quote } from "./guard/shell.mjs";
@@ -278,6 +278,7 @@ export class Expediter {
       system: cookContract(),
       addDirs: [dir],
       model: kitchen.config.model,
+      effort: effortOf(kitchen.config.effort),
       budget: kitchen.config.budgetUsdPerTurn,
       label: `${task.id} ${task.title}`,
       stubKey: task.key ?? task.id,
@@ -390,7 +391,7 @@ export class Expediter {
     const task = kitchen.task(ticket);
     const project = kitchen.state.projects[task.project];
     const dir = kitchen.taskDir(task.id);
-    const run = this.harness.interactive({ kind: "cook", prompt: launch.prompt, session: task.session, resume: launch.resume, settings: this.writeSettings(dir, "cook"), system: cookContract(), addDirs: [dir], model: kitchen.config.model, label: `${task.id} ${task.title}`, stubKey: task.key ?? task.id });
+    const run = this.harness.interactive({ kind: "cook", prompt: launch.prompt, session: task.session, resume: launch.resume, settings: this.writeSettings(dir, "cook"), system: cookContract(), addDirs: [dir], model: kitchen.config.model, effort: effortOf(kitchen.config.effort), label: `${task.id} ${task.title}`, stubKey: task.key ?? task.id });
     const env = { OUI_HOME: home(), OUI_ROLE: "cook", OUI_TOKEN: kitchen.token("cook", task.id), OUI_PORT: String(kitchen.port ?? ""), OUI_TASK: task.id, OUI_GOAL: task.goal, OUI_ROOTS: JSON.stringify([task.workdir, dir]), OUI_PROTECTED: JSON.stringify([project.base, ...(project.protected ?? [])].filter(Boolean)), PATH: `${this.shim}${path.delimiter}${process.env.PATH ?? ""}`, ...run.env };
     return { cmd: run.cmd, args: run.args, cwd: task.workdir, env };
   }
@@ -594,13 +595,20 @@ export class Expediter {
         if (task.status !== "review") return;
         if (!res.ok) return this.#sendBack(task, `A required check failed: \`${cmd}\`\n\n${clip(res.out.slice(-1800), 1800)}\n\nFix it, then run oui done again.`);
       }
-      if (reviewed && kitchen.config.calls?.review) {
+      // Each inspector reads the work alone, so one cannot talk another out of what it saw.
+      const names = reviewed ? inspectors().filter((name) => callSettings(kitchen.config, name ? `review: ${name}` : "review").on) : [];
+      if (names.length) {
         stage("review");
         task.review = null;
-        await this.runRole("review", { task });
+        task.reviews = {};
+        await Promise.all(names.map((inspector) => this.runRole("review", { task, inspector })));
         if (task.status !== "review") return;
-        if (task.review?.verdict === "changes") return this.#sendBack(task, `The inspector reviewed your work and wants changes before it merges:\n\n${task.review.notes}\n\nMake them, commit, then run oui done again.`);
-        task.unreviewed = !task.review; // the reviewer gave no verdict; say so on the board
+        const said = names.map((name) => ({ name: name || "the brief", review: task.reviews[name] }));
+        const notes = (list) => (names.length === 1 ? list[0]?.review?.notes ?? "" : list.filter((x) => x.review?.notes).map((x) => `${x.name}: ${x.review.notes}`).join("\n\n"));
+        const wanted = said.filter((x) => x.review?.verdict === "changes");
+        task.unreviewed = said.some((x) => !x.review); // an inspector gave no verdict; say so on the board
+        task.review = wanted.length ? { verdict: "changes", notes: notes(wanted), by: "inspector", at: now() } : said.some((x) => x.review) ? { verdict: "pass", notes: notes(said), by: "inspector", at: now() } : null;
+        if (wanted.length) return this.#sendBack(task, `${names.length === 1 ? "The inspector reviewed your work and wants" : "The inspectors reviewed your work and want"} changes before it merges:\n\n${task.review.notes}\n\nMake them, commit, then run oui done again.`);
       }
     }
     let merged = false;
@@ -627,17 +635,44 @@ export class Expediter {
 
   #planGoal(goal) {
     const { kitchen } = this;
-    const fallback = (why) => {
-      if (goal.status !== "planning") return;
-      kitchen.plan({ goalId: goal.id, tasks: [{ title: goal.title, brief: goal.detail, kind: "build" }] }, { role: "sous" });
-      kitchen.emit({ type: "system", from: "expediter", to: "chef", goal: goal.id, text: `${goal.id} runs as a single ticket (${why})` });
+    if (!callSettings(kitchen.config, "plan").on) return this.#single(goal, "planning is off");
+    this.runRole("plan", { goal }).then((run) => {
+      if (goal.status !== "planning") return; // the plan is in
+      // No plan came. Running the whole goal as one ticket would be a guess, so the chef chooses.
+      const limit = run.minutes;
+      const why = run.timedOut ? `The sous chef was still planning after ${limit} minute${limit === 1 ? "" : "s"} and was stopped.` : run.ok ? "The sous chef finished without applying a plan." : "The planner stopped before it applied a plan.";
+      if (run.timedOut) goal.planMinutes = Math.min(limit * 2, 120);
+      goal.status = "unplanned";
+      const ask = this.raise(
+        { goal: goal.id },
+        `${goal.id} has no plan: ${run.timedOut ? `planning ran past ${limit} minute${limit === 1 ? "" : "s"}` : "the sous chef did not write one"}`,
+        `${why}${run.timedOut ? ` Planning it again allows ${goal.planMinutes} minutes.` : ""}\nIn your own words: how to go about it, and the sous chef plans again with that.\n\nFor every goal from now on: "calls": { "plan": { "timeoutMinutes": 20, "effort": "medium" } } in ${P.config()} gives the planner more time, or has it think less hard.`,
+        { "Plan it again": ["goal.replan", goal.id], "Run it as one ticket": ["goal.single", goal.id], "Cancel the goal": ["goal.cancel", goal.id], "*": ["goal.replan", goal.id] },
+      );
+      goal.planAsk = ask.id;
       kitchen.changed();
-    };
-    if (!kitchen.config.calls?.plan) return fallback("planning is off");
-    this.runRole("plan", { goal }).then(
-      () => fallback("the sous chef did not produce a plan"),
-      () => fallback("the planner failed"),
-    );
+    });
+  }
+
+  // The whole goal as one ticket, in the chef's words: when planning is off, or when the chef says so.
+  #single(goal, why) {
+    const { kitchen } = this;
+    if (!["planning", "unplanned"].includes(goal.status)) return;
+    Object.assign(goal, { status: "planning", planAsk: null });
+    kitchen.plan({ goalId: goal.id, tasks: [{ title: goal.title, brief: goal.detail, kind: "build" }] }, { role: "expediter" });
+    kitchen.emit({ type: "system", from: "expediter", to: "chef", goal: goal.id, text: `${goal.id} runs as a single ticket (${why})` });
+    kitchen.changed();
+  }
+
+  // Back to the sous chef: the plan the chef saw is dropped, and what they said goes along.
+  #replan(goal, note) {
+    const { kitchen } = this;
+    if (!["proposed", "unplanned"].includes(goal.status)) return;
+    const seen = Object.values(kitchen.state.tasks).filter((t) => t.goal === goal.id && !["done", "cancelled"].includes(t.status));
+    if (note) goal.feedback = [...(goal.feedback ?? []), { note: clip(note, 1200), plan: seen.map((t) => `${t.title}${t.kind === "build" ? "" : ` (${t.kind})`}`) }].slice(-3);
+    for (const t of seen) Object.assign(t, { status: "cancelled", finishedAt: now() }); // none of them had started
+    Object.assign(goal, { status: "planning", planTried: false, planAsk: null });
+    kitchen.emit({ type: "plan", from: "chef", to: "sous", goal: goal.id, text: `${goal.id}: plan it again${note ? ` — ${note}` : ""}` });
   }
 
   #goalComplete(goal, tasks) {
@@ -743,12 +778,19 @@ export class Expediter {
 
   runRole(kind, ctx) {
     const subject = ctx.task?.id ?? ctx.ask?.id ?? ctx.goal?.id;
-    const id = `${kind}:${subject}`;
+    const id = `${kind}${ctx.inspector ? `:${ctx.inspector}` : ""}:${subject}`;
     if (this.roles.has(id)) return this.roles.get(id);
-    const promise = this.#role(kind, ctx, subject).finally(() => {
-      this.roles.delete(id);
-      this.kick();
-    });
+    // What a call is told comes from files the chef can edit, so a call that cannot even start ends like one that failed.
+    const promise = Promise.resolve()
+      .then(() => this.#role(kind, ctx, subject))
+      .catch((e) => {
+        console.error(`oui ${id}:`, e.message);
+        return { ok: false, timedOut: false, minutes: 0 };
+      })
+      .finally(() => {
+        this.roles.delete(id);
+        this.kick();
+      });
     this.roles.set(id, promise);
     return promise;
   }
@@ -760,25 +802,34 @@ export class Expediter {
     const task = ctx.task ?? (ctx.ask?.task ? s.tasks[ctx.ask.task] : null);
     const project = s.projects[(task ?? ctx.goal)?.project];
     const cwd = task?.workdir && fs.existsSync(task.workdir) ? task.workdir : project?.path ?? home();
-    const dir = ensureDir(path.join(P.roles(), `${kind}-${subject}`));
-    const env = this.agentEnv(role, task?.id ?? subject, { OUI_TASK: task?.id ?? "", OUI_ASK: ctx.ask?.id ?? "", OUI_GOAL: ctx.goal?.id ?? task?.goal ?? "", OUI_ROOTS: JSON.stringify([dir]), OUI_PROTECTED: "[]" });
-    const run = this.harness.command({ kind, prompt: rolePrompt(kind, kitchen, ctx), session: crypto.randomUUID(), resume: false, settings: this.writeSettings(dir, role), model: kitchen.config.sousModel, addDirs: [dir], label: `oui ${kind} ${subject}`, stubKey: task?.key ?? task?.id ?? subject });
+    // An inspector of the chef's own is its own call: its own settings, its own folder, its own name on the verdict.
+    const call = ctx.inspector ? `${kind}: ${ctx.inspector}` : kind;
+    const tuned = callSettings(kitchen.config, call);
+    const minutes = (kind === "plan" && ctx.goal?.planMinutes) || tuned.timeoutMinutes;
+    const dir = ensureDir(path.join(P.roles(), `${kind}${ctx.inspector ? `-${slug(ctx.inspector, 24)}` : ""}-${subject}`));
+    const env = this.agentEnv(role, task?.id ?? subject, { OUI_TASK: task?.id ?? "", OUI_ASK: ctx.ask?.id ?? "", OUI_GOAL: ctx.goal?.id ?? task?.goal ?? "", OUI_INSPECTOR: ctx.inspector ?? "", OUI_ROOTS: JSON.stringify([dir]), OUI_PROTECTED: "[]" });
+    const run = this.harness.command({ kind: call, prompt: rolePrompt(kind, kitchen, ctx), session: crypto.randomUUID(), resume: false, settings: this.writeSettings(dir, role), model: tuned.model, effort: tuned.effort, addDirs: [dir], label: `oui ${call} ${subject}`, stubKey: task?.key ?? task?.id ?? subject });
+    // -> { ok, timedOut, minutes }: how the call ended, and how long it was allowed.
     return new Promise((resolve) => {
       let child;
+      let timedOut = false;
       try {
         child = spawn(run.cmd, run.args, { cwd, env: { ...env, ...run.env }, stdio: ["pipe", "pipe", "pipe"] });
       } catch {
-        return resolve(false);
+        return resolve({ ok: false, timedOut, minutes });
       }
       const raw = fs.createWriteStream(path.join(dir, "run.jsonl"));
       child.stdout.pipe(raw);
       child.stderr.on("data", () => {});
       child.stdin.on("error", () => {});
       child.stdin.end(run.stdin);
-      const timer = setTimeout(() => child.kill("SIGTERM"), kitchen.config.roleTimeoutMinutes * 60000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, minutes * 60000);
       const done = (ok) => {
         clearTimeout(timer);
-        resolve(ok);
+        resolve({ ok: ok && !timedOut, timedOut, minutes });
       };
       child.on("error", () => done(false));
       child.on("close", (code) => done(code === 0));
@@ -807,6 +858,14 @@ export class Expediter {
     if (verb === "goal.land") return void this.land(this.kitchen.goal(id));
     if (verb === "ticket.land") return this.#landNow(this.kitchen.task(id));
     if (verb === "ticket.decided") return this.#decided(this.kitchen.task(id), ask);
+    if (verb === "goal.cook") {
+      const g = this.kitchen.goal(id);
+      if (g.status === "proposed") Object.assign(g, { status: "active", planAsk: null });
+      return undefined;
+    }
+    if (verb === "goal.replan") return this.#replan(this.kitchen.goal(id), guidance);
+    if (verb === "goal.single") return this.#single(this.kitchen.goal(id), "the chef said so");
+    if (verb === "goal.cancel") return void this.goalSet({ id, status: "cancelled" });
     if (verb === "goal.leave") {
       const g = this.kitchen.goal(id);
       g.landDeferred = true;
@@ -892,6 +951,11 @@ export class Expediter {
   goalSet({ id, status }) {
     const g = this.kitchen.goal(id);
     if (!["active", "paused", "cancelled"].includes(status)) throw new Fail("status is active, paused or cancelled");
+    if (status === "active" && g.status === "unplanned") throw new Fail(`${id} has no plan yet${g.planAsk ? `: see ${g.planAsk}` : ""}`);
+    // Resuming a goal whose plan was waiting is the chef's go. A cancelled goal asks nothing more.
+    if (status === "active") this.kitchen.withdrawGoalAsks(id, "the chef resumed the goal", ["plan"]);
+    if (status === "cancelled") this.kitchen.withdrawGoalAsks(id, "goal cancelled");
+    if (status !== "paused") Object.assign(g, { planAsk: null, ...(status === "cancelled" ? { landAsk: null } : {}) });
     g.status = status;
     if (status !== "active") for (const t of Object.values(this.kitchen.state.tasks)) if (t.goal === id && (status === "cancelled" ? !["done", "cancelled"].includes(t.status) : t.status === "running")) status === "cancelled" ? this.cancel({ id: t.id }) : this.pause({ id: t.id });
     this.kitchen.emit({ type: "system", from: "chef", to: "board", goal: id, text: `${id} ${status}` });

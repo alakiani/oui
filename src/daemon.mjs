@@ -2,7 +2,7 @@
 // `oui up` starts it in the background; everything else is a client.
 
 import fs from "node:fs";
-import { P, OUI_BIN, home, readJson, writeJsonAtomic } from "./paths.mjs";
+import { P, OUI_BIN, configProblems, home, readJson, writeJsonAtomic } from "./paths.mjs";
 import { Kitchen } from "./kitchen.mjs";
 import { Expediter } from "./expediter.mjs";
 import { createServer } from "./server.mjs";
@@ -34,6 +34,10 @@ export async function runDaemon({ port } = {}) {
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
   console.log(`Oui Chef is up: http://127.0.0.1:${kitchen.port}  (home ${home()}, harness ${kitchen.config.harness})`);
+  for (const text of configProblems(kitchen.config)) {
+    console.log(text);
+    kitchen.emit({ type: "system", from: "expediter", to: "chef", text });
+  }
   expo.kick();
   return { kitchen, expo, server, shutdown };
 }

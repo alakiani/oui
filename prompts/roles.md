@@ -7,8 +7,7 @@ The chef's goal, in their words:
 {{detail}}
 
 Project `{{project}}` at `{{path}}`{{git}}.
-{{preferences}}
-
+{{preferences}}{{feedback}}
 Do this:
 
 1. Look at the project (read-only) until you understand what the goal means here: where the change goes, what already exists, how it is tested and shipped. Facts are yours to find.
@@ -20,13 +19,15 @@ Do this:
 ```bash
 oui plan - <<'EOF'
 { "goalId": "{{goal}}",
-  "goal": { "title": "<a short title for the goal>" },
+  "goal": { "title": "<a short title for the goal>", "note": "<for the chef, in two or three lines: how you cut the work and what you assumed>" },
   "tickets": [
     { "key": "a", "title": "...", "brief": "...", "accept": ["..."], "kind": "build" },
     { "key": "b", "title": "...", "brief": "...", "accept": ["..."], "kind": "build", "needs": ["a"] }
   ] }
 EOF
 ```
+
+The chef may read the plan before anything starts, so the note and the ticket titles should tell them what they are saying yes to.
 
 Only when there is a question for the chef, it is one more ticket in that list, and the tickets that depend on the answer name its key in their `needs`:
 

@@ -50,7 +50,9 @@ function steps() {
     return t[env.OUI_STUB_KEY] ?? t[env.OUI_TASK] ?? t["*"] ?? DEFAULTS.cook;
   }
   const r = scenario.roles ?? {};
-  return r[`${kind}:${env.OUI_STUB_KEY}`] ?? r[kind] ?? DEFAULTS[kind] ?? [];
+  // An inspector of the chef's own ("review: security") does what any inspector does, unless the scenario says otherwise.
+  const base = kind.split(":")[0];
+  return r[`${kind}:${env.OUI_STUB_KEY}`] ?? r[kind] ?? r[`${base}:${env.OUI_STUB_KEY}`] ?? r[base] ?? DEFAULTS[base] ?? [];
 }
 
 const fill = (s) =>

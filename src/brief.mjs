@@ -54,6 +54,22 @@ function sections(text) {
 // roles.md holds one section per judgement call. The chef's own file may carry only the ones it changes.
 const roleTemplate = (kind) => sections(own("roles.md"))[kind] || sections(builtin("roles.md"))[kind];
 
+// A section headed "review: <name>" is one more inspector, with a brief of its own. -> its name, or null.
+const inspectorOf = (heading) => /^review\s*:\s*(\S.*)$/.exec(heading)?.[1].trim() ?? null;
+
+// Every inspector that reads finished work: "" is the built-in one, then any the chef or the kitchen added.
+export function inspectors() {
+  const names = [""];
+  for (const text of [builtin("roles.md"), own("roles.md")]) for (const heading of Object.keys(sections(text))) if (inspectorOf(heading) && !names.includes(inspectorOf(heading))) names.push(inspectorOf(heading));
+  return names;
+}
+
+function inspectorTemplate(name) {
+  if (!name) return roleTemplate("review");
+  for (const text of [own("roles.md"), builtin("roles.md")]) for (const [heading, body] of Object.entries(sections(text))) if (inspectorOf(heading) === name && body) return body;
+  return null;
+}
+
 export const cookContract = () => read("cook.md");
 
 const bullets = (list, empty = "- (none given: use the brief)") => (list?.length ? list.map((x) => `- ${x}`).join("\n") : empty);
@@ -131,6 +147,13 @@ function fill(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_m, key) => vars[key] ?? "");
 }
 
+// What the chef said about earlier plans for a goal, for the sous chef planning it again.
+function planFeedback(goal) {
+  const said = goal.feedback ?? [];
+  if (!said.length) return "";
+  return `\nThis goal has been planned before and the chef sent it back. What they said comes first:\n${said.map((f) => `${f.plan?.length ? `- The plan had: ${f.plan.join("; ")}\n  ` : "- "}The chef said: ${f.note}`).join("\n")}\n`;
+}
+
 // The manual the sous chef reads when the chef opens a conversation with `oui sous`.
 export function sousManual(notes = "") {
   return fill(read("sous.md"), { tickets: read("tickets.md").trim(), preferences: preferenceBlock(notes, "These come before anything else on this page.") });
@@ -138,12 +161,15 @@ export function sousManual(notes = "") {
 
 export function rolePrompt(kind, kitchen, ctx) {
   const s = kitchen.state;
-  const template = roleTemplate(kind);
-  if (!template) throw new Error(`No prompt for role ${kind}`);
+  const template = kind === "review" ? inspectorTemplate(ctx.inspector) : roleTemplate(kind);
+  if (!template) throw new Error(`No prompt for role ${kind}${ctx.inspector ? `: ${ctx.inspector}` : ""}`);
   const prefs = preferences(kitchen);
   if (kind === "plan") {
     const project = s.projects[ctx.goal.project];
-    return fill(template, { detail: ctx.goal.detail, goal: ctx.goal.id, project: project.name, path: project.path, git: project.git ? ` (git, base branch \`${project.base}\`, finished goals land ${project.landing === "pr" ? "as a pull request" : "by local merge"})` : " (not a git repository)", preferences: prefs, tickets: read("tickets.md").trim() });
+    const feedback = planFeedback(ctx.goal);
+    // A plan template of the chef's own may not have a place for it; what they said must still arrive.
+    return `${fill(template, {
+      feedback, detail: ctx.goal.detail, goal: ctx.goal.id, project: project.name, path: project.path, git: project.git ? ` (git, base branch \`${project.base}\`, finished goals land ${project.landing === "pr" ? "as a pull request" : "by local merge"})` : " (not a git repository)", preferences: prefs, tickets: read("tickets.md").trim() })}${template.includes("{{feedback}}") ? "" : feedback}`;
   }
   const task = ctx.task ?? (ctx.ask?.task ? s.tasks[ctx.ask.task] : null);
   const goal = task ? s.goals[task.goal] : null;

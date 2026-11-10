@@ -155,3 +155,72 @@ test("the chef's own prompt files win over the built-in ones, one file or one ro
   assert.match(cookContract(), /You are a line cook/);
   fs.rmSync(home, { recursive: true, force: true });
 });
+
+test("a judgement call can be switched off or tuned, and an inspector of the chef's own starts from what review says", async () => {
+  const { DEFAULT_CONFIG, callSettings, configProblems } = await import("../src/paths.mjs");
+  const base = { ...DEFAULT_CONFIG, sousModel: "sonnet", sousEffort: "medium" };
+  assert.deepEqual(callSettings(base, "plan"), { on: true, model: "sonnet", effort: "medium", timeoutMinutes: 10 });
+  assert.equal(callSettings({ ...base, calls: { ...base.calls, triage: false } }, "triage").on, false);
+  const tuned = { ...base, calls: { plan: { effort: "low", timeoutMinutes: 25 }, review: { model: "opus" }, "review: security": { effort: "max" }, "review: style": false } };
+  assert.deepEqual(callSettings(tuned, "plan"), { on: true, model: "sonnet", effort: "low", timeoutMinutes: 25 });
+  assert.deepEqual(callSettings(tuned, "review"), { on: true, model: "opus", effort: "medium", timeoutMinutes: 10 });
+  assert.deepEqual(callSettings(tuned, "review: security"), { on: true, model: "opus", effort: "max", timeoutMinutes: 10 });
+  assert.equal(callSettings(tuned, "review: style").on, false);
+  assert.equal(callSettings({ ...tuned, calls: { ...tuned.calls, review: false } }, "review: security").on, false, "review: false is the switch for every inspector");
+
+  // A level the agent does not know is left out rather than passed on, and the chef is told.
+  const typo = { ...DEFAULT_CONFIG, effort: "fast", sousEffort: "medium", calls: { plan: { effort: "very high" } } };
+  assert.equal(callSettings(typo, "plan").effort, "medium");
+  assert.deepEqual(configProblems(typo), ['config: effort is "fast", which is not one of low, medium, high, xhigh, max; ignored', 'config: calls["plan"].effort is "very high", which is not one of low, medium, high, xhigh, max; ignored']);
+  assert.deepEqual(configProblems(DEFAULT_CONFIG), []);
+});
+
+test("the effort set for a call is passed to the agent when its command line has a place for it", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oui-claude-"));
+  const bin = path.join(dir, "claude");
+  fs.writeFileSync(bin, '#!/bin/sh\necho "  --effort <level>   Effort level"\necho "  --model <model>"\n', { mode: 0o755 });
+  process.env.OUI_CLAUDE_BIN = bin;
+  const claude = await import("../src/harness/claude.mjs");
+  const run = { prompt: "p", session: "s", settings: "/tmp/settings.json", model: "sonnet", effort: "low" };
+  const headless = claude.command(run).args;
+  assert.deepEqual(headless.slice(headless.indexOf("--model"), headless.indexOf("--model") + 4), ["--model", "sonnet", "--effort", "low"]);
+  assert.ok(claude.interactive(run).args.join(" ").includes("--effort low"));
+  assert.ok(!claude.command({ ...run, effort: null }).args.includes("--effort"), "no setting, no flag: the agent's own default applies");
+  delete process.env.OUI_CLAUDE_BIN;
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a section headed review: <name> is one more inspector, and a plan sent back carries what the chef said", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "oui-inspect-"));
+  process.env.OUI_HOME = home;
+  const { Kitchen } = await import("../src/kitchen.mjs");
+  const { inspectors, ownPrompt, rolePrompt } = await import("../src/brief.mjs");
+  const kitchen = new Kitchen();
+  kitchen.projectAdd({ path: home, name: "api" });
+  const plan = kitchen.plan({ goal: { title: "A goal", detail: "Do it.", project: "api" }, tickets: [{ key: "a", title: "One", brief: "Build one." }] }, { role: "chef" });
+  const a = kitchen.state.tasks[plan.tasks[0].id];
+  Object.assign(a, { workdir: home, branch: "oui/G1/T1-one" });
+  const goal = kitchen.state.goals[plan.goal];
+  goal.branch = "oui/G1-a-goal";
+
+  assert.deepEqual(inspectors(), [""], "out of the box there is one inspector");
+  assert.match(rolePrompt("review", kitchen, { task: a, inspector: "" }), /You are the inspector in Oui Chef's kitchen/);
+  fs.mkdirSync(path.join(home, "prompts"));
+  fs.writeFileSync(ownPrompt("roles.md"), "## review: security\n\nLook for secrets in `git diff {{base}}...{{branch}}` of {{ticket}}. Brief: {{brief}}\n\n## review:house style\n\nCheck names in {{ticket}}.\n\n## plan\n\nHouse planner for {{goal}}: {{detail}}\n");
+  assert.deepEqual(inspectors(), ["", "security", "house style"]);
+  assert.equal(rolePrompt("review", kitchen, { task: a, inspector: "security" }), "Look for secrets in `git diff oui/G1-a-goal...oui/G1/T1-one` of T1. Brief: Build one.");
+  assert.equal(rolePrompt("review", kitchen, { task: a, inspector: "house style" }), "Check names in T1.");
+  assert.match(rolePrompt("review", kitchen, { task: a }), /You are the inspector in Oui Chef's kitchen/, "the built-in inspector is still there");
+  assert.throws(() => rolePrompt("review", kitchen, { task: a, inspector: "nobody" }), /No prompt for role review: nobody/);
+
+  // What the chef said about an earlier plan reaches the planner, even through a plan prompt of the chef's own.
+  assert.equal(rolePrompt("plan", kitchen, { goal }), "House planner for G1: Do it.");
+  goal.feedback = [{ note: "Split the API work in two.", plan: ["One", "Deploy (ops)"] }, { note: "Start with the schema.", plan: [] }];
+  assert.equal(rolePrompt("plan", kitchen, { goal }), "House planner for G1: Do it.\nThis goal has been planned before and the chef sent it back. What they said comes first:\n- The plan had: One; Deploy (ops)\n  The chef said: Split the API work in two.\n- The chef said: Start with the schema.\n");
+  fs.rmSync(ownPrompt("roles.md"));
+  const builtIn = rolePrompt("plan", kitchen, { goal });
+  assert.ok(!/\{\{|\}\}/.test(builtIn));
+  assert.match(builtIn, /\nThis goal has been planned before and the chef sent it back\. What they said comes first:\n- The plan had: One; Deploy \(ops\)\n  The chef said: Split the API work in two\.\n- The chef said: Start with the schema\.\n\nDo this:/);
+  assert.match(builtIn, /"note": "<for the chef, in two or three lines/);
+  fs.rmSync(home, { recursive: true, force: true });
+});

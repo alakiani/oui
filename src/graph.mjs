@@ -83,7 +83,7 @@ export function deadNeeds(task, byId) {
 export function displayState(task, byId, openAsks, goal) {
   if (task.status === "todo") {
     if (goal && goal.status === "paused") return "paused";
-    if (goal && goal.status === "planning") return "waiting";
+    if (goal && (goal.status === "planning" || goal.status === "proposed")) return "waiting"; // proposed: the plan is in, the chef has not said go
     if (deadNeeds(task, byId).length) return "stuck";
     return unmetNeeds(task, byId).length ? "waiting" : "ready";
   }

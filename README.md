@@ -43,7 +43,7 @@ Needs Node 20 or newer, git, and [Claude Code](https://code.claude.com) logged i
 git clone https://github.com/alakiani/oui.git
 cd oui
 npm link        # puts `oui` on your PATH
-npm test        # 44 tests; takes under a minute
+npm test        # 50 tests; takes under a minute
 ```
 
 There are no dependencies to install. New here? [Getting started](docs/getting-started.md) walks from the demo to your first real goal, then to Herdr.
@@ -65,6 +65,15 @@ oui go "Add rate limiting to the public API and roll it out to staging"
 ```
 
 `oui go` hands the goal to the sous chef, who reads the repository and writes the tickets and their order. Anything only you can decide becomes a question on the pass straight away: the tickets that need the answer wait for it, and the rest start as soon as the plan is in.
+
+To see the plan before anything starts:
+
+```bash
+oui go "Add rate limiting to the public API" --plan ask     # this goal only
+oui project add ~/code/api --plan ask                       # every goal in this project
+```
+
+The plan then waits on the pass as one ask: the tickets, what waits on what, and a note from the sous chef on how it cut the work and what it assumed. Answer "Cook it" (or `oui approve A2`), or say in your own words what to change and the sous chef plans again with that. For a small goal this is one read in place of a conversation.
 
 To talk a goal through first, with you in the loop:
 
@@ -98,7 +107,7 @@ oui undo X12                             # show the recipe;  --yes runs it
 
 ### What a ticket goes through
 
-`waiting` (something it needs is unfinished) → `next up` → `running` → `in review` (your project's checks, then the inspector) → merged into the goal's branch → `done`. On the way it can be `at the pass` (an open question, access request or held command), `with sous chef` (a question the sous chef may be able to answer), or sent back to its cook with the reason.
+`waiting` (something it needs is unfinished) → `next up` → `running` → `in review` (your project's checks, then the inspector, or [inspectors](#more-than-one-inspector)) → merged into the goal's branch → `done`. On the way it can be `at the pass` (an open question, access request or held command), `with sous chef` (a question the sous chef may be able to answer), or sent back to its cook with the reason.
 
 Finished tickets merge into one branch per goal, so later tickets start from everything before them. When a goal is finished you get one ask: land it. Landing is a fast-forward of your base branch (`landing: local`) or one pull request (`landing: pr`). A plan can also contain a `land` ticket in the middle, for work that must be on the base branch before a pipeline or rollout runs.
 
@@ -224,6 +233,22 @@ Some ways to run a kitchen:
 
 For one lasting preference you do not need a file: `oui remember "skip the questions on small goals"` reaches the sous chef, the planner and every cook.
 
+### More than one inspector
+
+Out of the box one inspector reads each finished build ticket against its brief. Any section in your `roles.md` headed `review: <name>` is one more. Each reads the work separately, at the same time, so one concern cannot crowd out another. A ticket merges when none of them wants changes; otherwise the cook gets every inspector's notes in one go.
+
+```markdown
+## review: standards
+
+You check one thing in ticket {{ticket}}: that the change follows this project's CONTRIBUTING.md.
+Read it, then read `git diff {{base}}...{{branch}}` in `{{workdir}}`. You do not edit files.
+
+- `oui verdict {{ticket}} pass --notes "<what you checked>"`
+- `oui verdict {{ticket}} changes --notes "<the rule, and where the change breaks it>"`
+```
+
+A section can use what the built-in one uses: `{{ticket}}`, `{{title}}`, `{{brief}}`, `{{accept}}`, `{{decisions}}`, `{{summary}}`, `{{evidence}}`, `{{actions}}`, `{{branch}}`, `{{base}}`, `{{workdir}}`, `{{checks}}`. It must end in one `oui verdict`. `oui prompts` lists the inspectors in use. To change what the built-in one looks for, write your own `## review` section.
+
 Words in double braces, such as `{{detail}}` and `{{tickets}}`, are filled in by Oui Chef; keep the ones you want. Agents cannot rewrite what they are told: the pass refuses any attempt to touch your copies.
 
 ## Configuration
@@ -235,13 +260,30 @@ Words in double braces, such as `{{detail}}` and `{{tickets}}`, are filled in by
 | `port` | `7330` | Where the daemon listens, on 127.0.0.1 only |
 | `sessions` | `auto` | Where cooks run: `auto`, `herdr`, `tmux` or `none` (see above) |
 | `maxCooks` | `3` | Cooks running at once, across all projects |
-| `model`, `sousModel` | harness default | Model for cooks, and for the sous chef's and inspector's short calls |
-| `calls.plan` / `calls.triage` / `calls.review` | `true` | Turn each judgement call off |
+| `model`, `sousModel` | harness default | Model for cooks, and for the judgement calls: the planner, triage and the inspectors |
+| `effort`, `sousEffort` | harness default | How hard they think: `low`, `medium`, `high`, `xhigh` or `max` |
+| `calls.plan` / `calls.triage` / `calls.review` | `true` | `false` turns a judgement call off. An object tunes that one call: `{ "model": …, "effort": …, "timeoutMinutes": … }` |
+| `roleTimeoutMinutes` | `10` | A judgement call longer than this is stopped |
 | `maxAttempts` | `3` | Times a ticket is sent back before you are asked |
 | `turnTimeoutMinutes` | `120` | A cook's turn longer than this is stopped |
 | `budgetUsdPerTurn` | none | Spending limit per cook turn |
 
-Per project (`oui project add <path> --landing local|pr --merge ask|auto --verify "npm test"`): how goals land, whether landing asks you, and checks every ticket must pass.
+Judgement calls run with your agent's own defaults unless you say otherwise, so a default set for long work makes every plan and review slow. To give the planner room and keep the short calls quick:
+
+```json
+{
+  "sousEffort": "medium",
+  "calls": {
+    "plan": { "timeoutMinutes": 20 },
+    "triage": { "effort": "low" },
+    "review: security": { "model": "opus", "effort": "high" }
+  }
+}
+```
+
+An inspector of your own (`review: security`) starts from what `review` says and can differ from it; `false` switches that one off. If the planner runs out of time or stops without a plan, nothing is guessed: an ask on the pass offers to plan it again (with twice the time, if time was the problem), run the goal as one ticket, or cancel it.
+
+Per project (`oui project add <path> --landing local|pr --merge ask|auto --plan auto|ask --verify "npm test"`): how goals land, whether landing asks you, whether you see each plan before it starts, and checks every ticket must pass.
 
 `oui remember "always squash-merge"` saves a standing preference. Every cook, every plan and the sous chef you talk to get it.
 
@@ -257,11 +299,14 @@ Verified, with real runs:
 - **The web board** in Chromium: dark, light and phone width; answering, approving and firing a goal from the page.
 - **Questions as tickets, and your own prompts**, on macOS. Automated: a `decide` ticket reaches the pass while every cook is busy, holds only the tickets that need it, and its answer is in the brief of the cook behind it; your own prompt files win over the built-in ones, one file or one role at a time; the pass refuses an agent that touches them. With real Claude Code, once each on a scratch repository: the planner turned "add rate limiting" into two tickets that started at once, two questions on the pass, and one last ticket waiting for both answers; it turned a small, clear goal into a single ticket with no question; and the sous chef, given a one-sentence goal, read the repository, asked one numbered round of three questions with its own answer to each, and planned nothing.
 
+- **Seeing the plan first, tuned judgement calls, more than one inspector**, on macOS. Automated: a plan waits on the pass, goes back with your words and starts on your go; a sous chef who runs out of time or writes no plan asks instead of guessing; an inspector of your own reads the work separately and sends it back; the effort you set reaches the agent's command line. With real Claude Code, once: at `medium` effort with the plan check on, the planner planned "add rate limiting" in one minute, and its plan waited on the pass with a note on how it cut the work and what it assumed. The same goal had taken 6.8 minutes at the agent's default effort, on an earlier and longer version of the ticket rules, so the two are not a like-for-like comparison.
+
 Not verified:
 
 - **Anything inside real Herdr.** Herdr and herdr-core could not be run where this was built. The `herdr` sessions backend uses only documented `hc` commands (`run`, `send`, `get`, `kill`, `rm`, `read`, `keys`, `interrupt`), and is tested against a stand-in. Whether a goal's cooks land in one space as named tabs exactly as intended is unconfirmed. The mod is written against Herdr's published guide and type file and tested with Herdr's modules replaced by stand-ins; how Herdr draws it is unconfirmed.
 - **Real clusters and forges.** `kubectl`, `helm` and `gh` were stand-ins. The checkpoint and undo commands are the documented ones; they have not been run against a live cluster.
 - **`landing: pr`** (push and `gh pr create`), **`oui sous`** and **`oui takeover`** (interactive sessions) were not exercised end to end. Of a conversation with the sous chef, only its first reply was seen.
+- **A real inspector of your own, and a real plan sent back.** Both run in the tests with scripted agents only.
 - **A real cook working from a decision.** The tests show the answer in the cook's brief; no real cook has built on one yet. The `decide` ticket on the web board and in the Herdr panel was not looked at.
 - **Other agent CLIs.** Cooks are Claude Code. `src/harness/` is the one place to add another.
 

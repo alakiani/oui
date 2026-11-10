@@ -28,6 +28,13 @@ script.tasks.stuck = [{ run: 'oui fail "The schema file is missing."' }, { end: 
 // A cook with a question that has options.
 script.tasks.picky = [{ run: 'oui ask "Which one?" --option "One" --option "Two"' }, { end: true }, { run: 'oui done --summary "Went with what the chef picked."' }];
 
+// A cook whose file name the house inspector does not like, until it is renamed.
+script.tasks.styled = [{ write: "notes.txt", content: "x\n" }, { run: 'git add -A && git commit -qm "Add notes"' }, { run: 'oui done --summary "Added the notes file."' }, { end: true }, { run: 'git mv notes.txt renamed.txt && git commit -qm "Rename"' }, { run: 'oui done --summary "Renamed as the house asks."' }];
+// An inspector of the chef's own. It looks at one thing only.
+script.roles["review: standards"] = [{ run: 'test -f renamed.txt && oui verdict {ticket} pass --notes "Named for what it holds." || oui verdict {ticket} changes --notes "Name the file after what it holds."' }];
+// The sous chef planning a goal by itself: two tickets, and a note for the chef.
+const PLANNER = [{ run: `oui plan - <<'EOF'\n{ "goalId": "{goal}", "goal": { "title": "Two steps", "note": "Cut in two. Assumed nothing else changes." }, "tickets": [ { "key": "first", "kind": "scout", "title": "First step", "brief": "x" }, { "key": "second", "kind": "scout", "title": "Second step", "brief": "x", "needs": ["first"] } ] }\nEOF` }];
+
 script.tasks.feature = [{ write: "feature.txt", content: "new\n" }, { run: 'git add -A && git commit -qm "Add the feature"' }, { run: 'oui done --summary "Added the feature."' }];
 script.tasks.deploy = [{ run: "git -C {repo} log --format=%s main | grep -q 'Add the feature'", must: true }, { run: "test -f feature.txt", must: true }, { run: 'oui done --summary "Deployed from main."' }];
 
@@ -59,6 +66,13 @@ const oui = (...args) =>
     child.on("close", (code) => resolve({ code, out }));
   });
 const state = (id) => board().tasks.find((t) => t.id === id)?.state;
+// What the stand-in for a judgement call does from its next run on.
+const setRole = (name, steps) => {
+  const all = JSON.parse(fs.readFileSync(demo.script, "utf8"));
+  all.roles[name] = steps;
+  fs.writeFileSync(demo.script, JSON.stringify(all));
+};
+const ticketsOf = (goal) => Object.values(kitchen.state.tasks).filter((t) => t.goal === goal);
 const askFor = (task, kind) => board().asks.find((a) => a.task === task && (!kind || a.kind === kind));
 
 test.after(() => {
@@ -272,6 +286,113 @@ test("a question in the plan reaches the pass at once and holds only the tickets
   assert.deepEqual([later.kind, later.options, later.pick], ["decision", ["Yes", "No"], "Yes"]);
   kitchen.askAnswer({ id: later.id, text: "Only for the first week" }, who);
   assert.equal(kitchen.state.tasks[later.task].decision, "Only for the first week", "the chef's own words are an answer too");
+});
+
+test("a plan waits for the chef's go when they ask to see plans first", async () => {
+  setRole("plan", PLANNER);
+  kitchen.config.calls.plan = true;
+  kitchen.projectAdd({ path: demo.repo, landing: "local", verify: [], plan: "ask", replace: true });
+  const { goal, check } = kitchen.go({ text: "Do it in two steps" }, who);
+  assert.equal(check, true);
+  const ask = await until("the plan to reach the pass", () => board().asks.find((a) => a.kind === "plan" && a.goal === goal));
+  assert.equal(kitchen.state.goals[goal].status, "proposed");
+  assert.match(ask.title, new RegExp(`^Cook ${goal} “Two steps” as planned\\?$`));
+  const [first, second] = ticketsOf(goal).map((t) => t.id);
+  assert.equal(ask.body, `Cut in two. Assumed nothing else changes.\n\n${first}  First step   (scout)\n${second}  Second step   (scout, after ${first})\n\nNothing starts until you say so. In your own words: what to change, and the sous chef plans again with that.`);
+  assert.deepEqual(ask.options, ["Cook it", "Cancel the goal"]);
+  assert.equal(ask.holds, 2, "the plan holds every ticket in it");
+  await new Promise((r) => setTimeout(r, 400));
+  assert.deepEqual([state(first), board().tasks.find((t) => t.id === first).line, state(second)], ["waiting", "when you say to cook", "waiting"], "nothing starts before the chef says so");
+
+  // In the chef's own words: that plan is dropped, and the sous chef plans again with what they said.
+  kitchen.askAnswer({ id: ask.id, text: "Make the first step smaller." }, who);
+  const again = await until("a second plan", () => board().asks.find((a) => a.kind === "plan" && a.goal === goal && a.id !== ask.id));
+  assert.deepEqual([kitchen.state.tasks[first].status, kitchen.state.tasks[second].status], ["cancelled", "cancelled"]);
+  assert.deepEqual(kitchen.state.goals[goal].feedback, [{ note: "Make the first step smaller.", plan: ["First step (scout)", "Second step (scout)"] }]);
+
+  // Approving a plan is the go.
+  const res = await oui("approve", again.id);
+  assert.equal(res.code, 0, res.out);
+  assert.equal(kitchen.state.asks[again.id].answer, "Cook it");
+  await until("the goal to finish", () => kitchen.state.goals[goal].status === "done");
+  assert.equal(ticketsOf(goal).filter((t) => t.status === "done").length, 2);
+
+  // One goal can ask for it, or skip it, whatever the project says.
+  const skipped = kitchen.go({ text: "Straight to the stove", plan: "auto" }, who);
+  assert.equal(skipped.check, false);
+  await until("the goal that skipped the check to finish", () => kitchen.state.goals[skipped.goal].status === "done");
+  assert.ok(!Object.values(kitchen.state.asks).some((a) => a.kind === "plan" && a.goal === skipped.goal));
+  kitchen.projectAdd({ path: demo.repo, landing: "local", verify: [], plan: "auto", replace: true });
+  const asked = await oui("go", "Show me first", "--plan", "ask");
+  assert.match(asked.out, /The plan will wait on the pass for your go\./);
+  const third = await until("the plan of the goal that asked", () => board().asks.find((a) => a.kind === "plan" && a.title.includes("as planned?") && ![ask.id, again.id].includes(a.id)));
+  assert.throws(() => kitchen.askDeny({ id: third.id }, who), /is a plan: say what to change/);
+
+  // Cancelling from the plan drops the goal and its tickets, and leaves nothing on the pass.
+  kitchen.askAnswer({ id: third.id, text: "Cancel the goal" }, who);
+  assert.equal(kitchen.state.goals[third.goal].status, "cancelled");
+  assert.ok(ticketsOf(third.goal).every((t) => t.status === "cancelled"));
+  assert.ok(!board().asks.some((a) => a.goal === third.goal));
+  kitchen.config.calls.plan = false;
+});
+
+test("a sous chef who runs out of time, or writes no plan, asks the chef instead of guessing", async () => {
+  setRole("plan", [{ sleep: 8000 }]);
+  kitchen.config.calls.plan = { timeoutMinutes: 0.03 };
+  const { goal } = kitchen.go({ text: "Something big" }, who);
+  const ask = await until("the chef to be told", () => board().asks.find((a) => a.kind === "stuck" && a.goal === goal));
+  assert.equal(kitchen.state.goals[goal].status, "unplanned");
+  assert.equal(ask.title, `${goal} has no plan: planning ran past 0.03 minutes`);
+  assert.match(ask.body, /was still planning after 0\.03 minutes and was stopped\. Planning it again allows 0\.06 minutes\./);
+  assert.deepEqual(ask.options, ["Plan it again", "Run it as one ticket", "Cancel the goal"]);
+  assert.equal(ticketsOf(goal).length, 0, "no ticket was made up for it");
+  assert.throws(() => expo.goalSet({ id: goal, status: "active" }), /has no plan yet/);
+
+  // Planning it again allows twice the time; this time the sous chef is quick.
+  setRole("plan", PLANNER);
+  kitchen.askAnswer({ id: ask.id, text: "Plan it again" }, who);
+  await until("the plan to arrive", () => kitchen.state.goals[goal].status === "active");
+  assert.equal(ticketsOf(goal).length, 2);
+  await until("the goal to finish", () => kitchen.state.goals[goal].status === "done");
+
+  // A sous chef that stops without a plan: the chef can have the goal run as it stands, or say how to go about it.
+  setRole("plan", []);
+  kitchen.config.calls.plan = true;
+  const other = kitchen.go({ text: "Something small" }, who).goal;
+  const none = await until("the chef to be told again", () => board().asks.find((a) => a.kind === "stuck" && a.goal === other));
+  assert.equal(none.title, `${other} has no plan: the sous chef did not write one`);
+  kitchen.askAnswer({ id: none.id, text: "Keep it to two steps." }, who);
+  assert.deepEqual(kitchen.state.goals[other].feedback, [{ note: "Keep it to two steps.", plan: [] }]);
+  const twice = await until("the chef to be told once more", () => board().asks.find((a) => a.kind === "stuck" && a.goal === other && a.id !== none.id));
+  kitchen.askAnswer({ id: twice.id, text: "Run it as one ticket" }, who);
+  assert.deepEqual(ticketsOf(other).map((t) => [t.title, t.by]), [["Something small", "expediter"]]);
+  await until("that ticket to finish", () => kitchen.state.goals[other].status !== "active" || board().asks.some((a) => a.kind === "land" && a.goal === other));
+  kitchen.config.calls.plan = false;
+});
+
+test("an inspector of the chef's own reads the work separately, and can send it back", async () => {
+  const mine = path.join(demo.home, "prompts", "roles.md");
+  fs.mkdirSync(path.dirname(mine), { recursive: true });
+  fs.writeFileSync(mine, '## review: standards\n\nYou check one thing in ticket {{ticket}}: every file is named for what it holds. See `git diff {{base}}...{{branch}}`, then run `oui verdict {{ticket}} pass` or `oui verdict {{ticket}} changes --notes "<what to rename>"`.\n');
+  assert.match((await oui("prompts")).out, /the built-in one \(## review\), and "standards"\./);
+  const g = kitchen.plan({ goal: { title: "House style", project: demo.repo }, tasks: [{ key: "styled", title: "Add the notes file", brief: "x" }] }, who);
+  const id = g.tasks[0].id;
+  await until("it to pass both inspectors on the second try", () => state(id) === "done");
+  const t = kitchen.state.tasks[id];
+  assert.equal(t.attempt, 1, "sent back once");
+  assert.deepEqual(Object.entries(t.reviews).map(([name, r]) => [name, r.verdict]).sort(), [["", "pass"], ["standards", "pass"]]);
+  assert.deepEqual([t.review.verdict, t.review.notes], ["pass", "the brief: Reads fine.\n\nstandards: Named for what it holds."]);
+  assert.ok(kitchen.feed.some((e) => e.task === id && e.text.startsWith("changes wanted (standards) — Name the file after what it holds.")));
+  assert.ok(kitchen.feed.some((e) => e.task === id && /^sent back: The inspectors reviewed your work and want changes before it merges:/.test(e.text)));
+  assert.ok(git("ls-tree", "-r", "--name-only", kitchen.state.goals[g.goal].branch).includes("renamed.txt"));
+
+  // One inspector can be switched off without touching the others.
+  kitchen.config.calls["review: standards"] = false;
+  const h = kitchen.plan({ goal: { title: "Built-in inspector only", project: demo.repo }, tasks: [{ key: "feature", title: "Add the feature again", brief: "x" }] }, who);
+  await until("it to be reviewed by the built-in inspector alone", () => state(h.tasks[0].id) === "done");
+  assert.deepEqual(Object.keys(kitchen.state.tasks[h.tasks[0].id].reviews), [""]);
+  delete kitchen.config.calls["review: standards"];
+  fs.rmSync(mine);
 });
 
 test("the chef's own prompts are listed, copied and then used", async () => {

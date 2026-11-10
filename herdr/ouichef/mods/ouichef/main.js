@@ -362,7 +362,7 @@ export default class OuiChef extends View {
 
   lane(c, lane) {
     const g = lane.goal;
-    const state = g.status === "planning" ? "sous chef is planning" : g.status === "done" ? (g.pr ? "in a pull request" : g.landed ? "landed" : "complete") : g.total && g.done === g.total ? "finished · waiting to land" : g.status === "active" ? "" : g.status;
+    const state = g.status === "planning" ? "sous chef is planning" : g.status === "proposed" ? "plan waiting for your go" : g.status === "unplanned" ? "no plan yet · needs you" : g.status === "done" ? (g.pr ? "in a pull request" : g.landed ? "landed" : "complete") : g.total && g.done === g.total ? "finished · waiting to land" : g.status === "active" ? "" : g.status;
     return v_flex().pb(22).flex_none()
       .child(h_flex().pb(9).gap(8).items_center()
         .child(div().flex_none().text_size(11).text_color(c.faint).child(g.id))

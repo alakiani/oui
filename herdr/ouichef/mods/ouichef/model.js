@@ -97,7 +97,7 @@ export function sections(b) {
 }
 
 export const STATE = { needs_you: "At the pass", running: "Running", blocked: "Resuming", review: "In review", with_sous: "With sous chef", ready: "Next up", waiting: "Waiting", stuck: "Stuck upstream", done: "Done", failed: "Failed", paused: "Paused" };
-export const KIND = { question: "QUESTION", decision: "DECISION", access: "ACCESS", approval: "APPROVE", land: "LAND", stuck: "STUCK" };
+export const KIND = { question: "QUESTION", decision: "DECISION", access: "ACCESS", approval: "APPROVE", land: "LAND", plan: "PLAN", stuck: "STUCK" };
 
 export const CARD_H = 74;
 export const ROW_GAP = 10;

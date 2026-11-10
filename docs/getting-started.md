@@ -108,6 +108,14 @@ To talk a goal through before any ticket exists, use `oui sous` instead of `oui 
 
 A question does not have to hold everything up. When only part of a plan depends on it, the sous chef can put it on the pass as a ticket of its own: the tickets that need your answer wait, and the rest start cooking.
 
+Somewhere between the two: hand the goal over, and look at the plan before it starts.
+
+```bash
+oui go "Add a --version flag to the CLI, with a test" --plan ask
+```
+
+The plan arrives on the pass as one ask, with the tickets and what the sous chef assumed. *Cook it* starts it. Typing what you would change sends it back to be planned again. `oui project add <path> --plan ask` does this for every goal in a project.
+
 ## 4. Tell it what production is, before any cluster work
 
 The pass holds anything in production for your approval. It recognises production by name: a kube context, namespace or host with the word `prod`, `production`, `prd` or `live` in it (`acme-prod-eu` counts, `product` does not). Check yours:
@@ -198,6 +206,8 @@ oui prompts copy sous
 
 Your copy lives in `~/.ouichef/prompts` and wins over the built-in one. The next conversation, plan, review or cook uses it; nothing needs restarting. Delete the file to go back.
 
+One inspector reads each finished ticket against its brief. To add another, with its own concern (your coding standards, security, naming), write a section headed `## review: <name>` in your `roles.md`. The README shows one.
+
 ## Day to day
 
 | You want to | Run |
@@ -217,6 +227,8 @@ Your copy lives in `~/.ouichef/prompts` and wins over the built-in one. The next
 - **A ticket failed or went quiet.** It is on the pass with *Retry*, *Accept as done* and *Cancel ticket*. `oui tail T3` shows what it did. Typing your own words instead of clicking an option retries it with that as guidance.
 - **A cook keeps asking for something you already settled.** Say it once for good with `oui remember`.
 - **The sous chef asks too much, or too little.** `oui remember "skip the questions on small goals"`, or edit your copy of `sous.md` (see Make it yours).
+- **Planning or reviewing takes minutes.** They run with your agent's default model and effort. Set `"sousEffort": "medium"` in `~/.ouichef/config.json`, or tune one call: `"calls": { "plan": { "effort": "medium", "timeoutMinutes": 20 } }`. Restart with `oui down && oui up`.
+- **A goal says it has no plan.** The sous chef ran out of time or stopped without one. The ask on the pass lets you plan it again, run the goal as a single ticket, or cancel it.
 - **Something was held that you never want to be asked about.** `oui approve A5 --always` for that exact command, or `oui policy set <rule> record` for the whole rule.
 - **The daemon will not start, or behaves oddly.** Read `~/.ouichef/daemon.log`.
 - **Start over.** `oui down`, then delete `~/.ouichef`. In each repository, `git worktree prune` and delete the `oui/…` branches you no longer want.

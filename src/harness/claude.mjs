@@ -16,7 +16,7 @@ function probe() {
   try {
     help = execFileSync(BIN(), ["--help"], { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"] });
   } catch {}
-  features = { found: Boolean(help), prompts: help.includes("--permission-prompts"), budget: help.includes("--max-budget-usd"), name: /\s--name\b/.test(help) };
+  features = { found: Boolean(help), prompts: help.includes("--permission-prompts"), budget: help.includes("--max-budget-usd"), name: /\s--name\b/.test(help), effort: /\s--effort\b/.test(help) };
   return features;
 }
 
@@ -26,7 +26,7 @@ export function available() {
   return probe().found;
 }
 
-// run: { prompt, session, resume, settings, system, addDirs, model, budget, label }
+// run: { prompt, session, resume, settings, system, addDirs, model, effort, budget, label }
 export function command(run) {
   const f = probe();
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--settings", run.settings];
@@ -34,6 +34,7 @@ export function command(run) {
   args.push(run.resume ? "--resume" : "--session-id", run.session);
   if (run.system) args.push("--append-system-prompt", run.system);
   if (run.model) args.push("--model", run.model);
+  if (run.effort && f.effort) args.push("--effort", run.effort);
   if (run.budget && f.budget) args.push("--max-budget-usd", String(run.budget));
   if (run.label && f.name) args.push("--name", run.label);
   if (run.addDirs?.length) args.push("--add-dir", ...run.addDirs);
@@ -47,6 +48,7 @@ export function interactive(run) {
   const args = ["--permission-mode", "acceptEdits", "--settings", run.settings, run.resume ? "--resume" : "--session-id", run.session];
   if (run.system) args.push("--append-system-prompt", run.system);
   if (run.model) args.push("--model", run.model);
+  if (run.effort && f.effort) args.push("--effort", run.effort);
   if (run.label && f.name) args.push("--name", run.label);
   if (run.addDirs?.length) args.push("--add-dir", ...run.addDirs);
   args.push("--", run.prompt);

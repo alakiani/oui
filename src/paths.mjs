@@ -63,7 +63,10 @@ export const DEFAULT_CONFIG = {
   harness: "claude", // "claude" | "stub"
   sessions: "auto", // where cooks run: "auto" (Herdr if herdr-core is installed, else headless) | "herdr" | "tmux" | "none"
   model: null, // cook model; null = the harness default
-  sousModel: null, // model for the first/inspector's short judgment calls
+  effort: null, // how hard cooks think: low | medium | high | xhigh | max; null = the harness default
+  sousModel: null, // model for the sous chef's and inspectors' judgement calls
+  sousEffort: null, // and how hard they think
+  // Each judgement call is on (true), off (false), or tuned: { model, effort, timeoutMinutes }.
   calls: { triage: true, review: true, plan: true },
   maxAttempts: 3, // times a ticket may be sent back before the chef is asked
   maxNudges: 2, // times a cook that stopped without reporting is nudged
@@ -75,4 +78,37 @@ export const DEFAULT_CONFIG = {
 export function loadConfig() {
   const user = readJson(P.config(), {}) ?? {};
   return { ...DEFAULT_CONFIG, ...user, calls: { ...DEFAULT_CONFIG.calls, ...(user.calls ?? {}) } };
+}
+
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+// A level the agent CLI knows, or null: a typo must not stop every cook from starting.
+export const effortOf = (value) => (EFFORTS.includes(value) ? value : null);
+
+// What in the config will be ignored, in words the chef can act on.
+export function configProblems(config) {
+  const out = [];
+  const check = (where, value) => {
+    if (value != null && !effortOf(value)) out.push(`config: ${where} is "${value}", which is not one of ${EFFORTS.join(", ")}; ignored`);
+  };
+  check("effort", config.effort);
+  check("sousEffort", config.sousEffort);
+  for (const [name, call] of Object.entries(config.calls ?? {})) if (call && typeof call === "object") check(`calls["${name}"].effort`, call.effort);
+  return out;
+}
+
+// How one judgement call runs: whether it is on, with which model, how hard it thinks and for
+// how long. `name` is plan, triage, review, or an inspector of the chef's own such as
+// "review: security", which starts from what `review` says and may differ from it.
+export function callSettings(config, name) {
+  const calls = config.calls ?? {};
+  const base = name.split(":")[0].trim();
+  const general = calls[base];
+  const own = name === base ? undefined : calls[name];
+  const tuned = { ...(typeof general === "object" && general ? general : {}), ...(typeof own === "object" && own ? own : {}) };
+  return {
+    on: general !== false && own !== false,
+    model: tuned.model ?? config.sousModel ?? null,
+    effort: effortOf(tuned.effort) ?? effortOf(config.sousEffort),
+    timeoutMinutes: Number(tuned.timeoutMinutes) > 0 ? Number(tuned.timeoutMinutes) : config.roleTimeoutMinutes,
+  };
 }
