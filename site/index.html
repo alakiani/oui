@@ -137,6 +137,11 @@ p { margin: 0; }
 .ask.quiet { border-left-color: var(--line); }
 .ask.clear { border-left-color: var(--green); }
 
+/* ---- the principle: one statement, set large */
+.say { margin-top: 16px; max-width: 24ch; font-size: clamp(1.9rem, 4.6vw, 3.5rem); font-weight: 680; letter-spacing: -.028em; line-height: 1.08; text-wrap: balance; }
+.say em { font-style: normal; color: var(--amber); }
+.say + .lede { margin-top: 24px; }
+
 /* ---- the board */
 .shot { margin: 0; }
 .shot .frame { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 30px 60px -20px var(--shadow); background: #0e1116; }
@@ -307,6 +312,14 @@ footer.end .fine { margin-left: auto; }
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="band" id="principle">
+    <div class="wrap">
+      <span class="label">The principle</span>
+      <p class="say">In a starred kitchen, the chef doesn't cook every dish. But every plate goes out under <em>the chef's name</em>.</p>
+      <p class="lede">Oui Chef works the same way: your agents do the cooking, and nothing that matters leaves the pass without you.</p>
     </div>
   </section>
 

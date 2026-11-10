@@ -2,9 +2,13 @@
 
 An orchestrator for coding agents, run like a kitchen. You give the order. A sous chef breaks it into tickets with an order of their own, cooks carry them out at their stations, and you are interrupted only for what is yours to decide. One board shows what is waiting on you, what is cooking and what comes next.
 
+> **In a starred kitchen, the chef doesn't cook every dish. But every plate goes out under the chef's name.**
+>
+> Oui Chef works the same way: your agents do the cooking, and nothing that matters leaves the pass without you.
+
 ![The board](docs/board.png)
 
-In a serious kitchen the chef does not cook during service. The chef stands at **the pass**: the counter every plate crosses on its way out. Orders are called from there, each station gets on with its part, and nothing leaves until the chef has seen it. Oui Chef gives you that seat for your coding agents.
+During service the chef stands at **the pass**: the counter every plate crosses on its way out. Orders are called from there, each station gets on with its part, and nothing leaves until the chef has seen it. Oui Chef gives you that seat for your coding agents.
 
 - **You do not keep track of sessions.** Every ticket, in every project, is on one board. The top of it is the only list you need to read: *the pass*.
 - **Order is part of the plan.** Tickets say what they need. Each one is fired when what it needs is finished, and the board shows that order left to right.
