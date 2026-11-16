@@ -108,6 +108,8 @@ To talk a goal through before any ticket exists, use `oui sous` instead of `oui 
 
 The plan it then writes is held: the tickets are on the board, and no cook starts. The sous chef calls the plan back to you in a few lines, says where it is least sure, and changes it until you both agree. It starts when you say so, there or with *Cook it* on the pass.
 
+After that you can stay in the conversation. The sous chef keeps a watch on the pass and brings you what needs you as it arrives, with its own recommendation, and tells you when a goal is finished.
+
 A question does not have to hold everything up. When only part of a plan depends on it, the sous chef can put it on the pass as a ticket of its own: the tickets that need your answer wait, and the rest start cooking.
 
 Somewhere between the two: hand the goal over, and look at the plan before it starts.

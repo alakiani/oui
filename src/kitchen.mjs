@@ -302,7 +302,10 @@ export class Kitchen {
       const held = goal.status === "proposed";
       if (held && input.hold) goal.planCheck = "ask"; // and so does any plan that takes its place
       this.emit({ type: "plan", from: who.role === "chef" ? "chef" : "sous", to: "board", goal: goal.id, text: `Planned ${goal.id} “${goal.title}”${waiting ? " again" : ""}: ${made.length} ticket${made.length === 1 ? "" : "s"}${held ? ", waiting for the chef's go" : ""}` });
-      if (held) this.putPlan(goal);
+      if (held) {
+        const ask = this.putPlan(goal);
+        if (who.role === "chef") ask.toldAt ??= now(); // whoever laid it down held already knows it is waiting
+      }
       this.changed();
       return { goal: goal.id, held, ask: held ? goal.planAsk : null, dropped: dropped.map((o) => o.id), tasks: made.map(([t]) => ({ id: t.id, key: t.key, title: t.title, needs: t.needs })) };
     } catch (e) {
@@ -484,6 +487,18 @@ export class Kitchen {
     } else this.#deliver(ask, { kind: "denied", command: ask.command, question: ask.title, text: note ?? "" });
     this.changed();
     return ask;
+  }
+
+  // What has reached the pass for the chef since they were last told. Each ask, and each goal that finishes,
+  // is handed over once, to whoever keeps watch for the chef. The board and `oui status` still show all that is open.
+  news() {
+    const asks = this.openAsks().filter((a) => a.to === "chef" && !a.toldAt);
+    const goals = Object.values(this.state.goals).filter((g) => g.news);
+    const finished = goals.map((g) => ({ id: g.id, title: g.title, project: g.project, pr: g.pr ?? null, landed: Boolean(g.landedAt), base: this.state.projects[g.project]?.base ?? null }));
+    for (const a of asks) a.toldAt = now();
+    for (const g of goals) delete g.news;
+    if (asks.length || goals.length) this.save(); // not a change to the board: nobody else needs waking
+    return { asks: asks.map((a) => a.id), goals: finished };
   }
 
   withdrawAsks(taskId, why) {

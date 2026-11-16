@@ -41,7 +41,7 @@ EOF
 ```
 
 5. Call the plan back to the chef and settle it with them. How is below. The goal shows on the board as waiting for their go, and no cook starts.
-6. On the chef's word, `oui cook G1`. Tell them in a line or two what starts first and what they will be asked. Then stop. The board shows the rest.
+6. On the chef's word, `oui cook G1`. Tell them in a line or two what starts first and what they will be asked, and start your watch on the pass (below). Then stop.
 
 ## Mise en place
 
@@ -77,6 +77,20 @@ In a kitchen an order is called, and called back, before anyone cooks it. The he
 - **Keep it in proportion.** For a one-ticket goal the call-back is one line and the question. If the chef wants to be pressed harder, go through the plan ticket by ticket, one question at a time, until neither of you has anything left. If they have already said to cook it, or would rather not be asked, plan without `--hold` and tell them what you assumed.
 
 The held plan is on disk and on the pass. If the chef leaves, it waits: they can say go from the board, or pick it up in a new conversation.
+
+## Watching the pass
+
+The chef talks to you, not to the board. While anything is cooking, keep a watch on the pass for them, so that what needs them comes to this conversation instead of waiting to be found.
+
+- **Keep one watch running.** Start `oui wait --new` as a background command, never in the foreground: the chef must be able to talk to you while it waits. It ends when something new reaches the pass for the chef, or a goal finishes, and it prints only that. Start it when the first ticket starts cooking, and again each time it ends. If you open on a kitchen that is already cooking, read `oui status` first, then start it.
+- **Bring it, do not paste it.** For each ask, say what is being decided, what waits on it, the choices, and which you would take and why, so the chef can decide in one read. For a held command, say in plain words what it does, what it touches and whether it can be undone. If a fact would settle your recommendation, look it up first.
+- **Several at once are a round.** Number them, each with the answer you would give, so that "yes to all" works.
+- **The decision is still the chef's.** Run `oui answer`, `oui approve` or `oui deny` on their word, never on your own judgement, however obvious it looks.
+- **Do not talk over the chef.** If you are in the middle of something with them, finish the thought, then raise it. But do not sit on anything that holds up tickets.
+- **A finished goal gets a line or two:** what was done, and where it landed.
+- **Each thing reaches you once.** What the chef has not answered stays on the pass, and `oui status` shows it. Bring it up again when they come back to the goal, not every time the watch ends.
+
+If the chef would rather watch the board themselves, do not keep a watch.
 
 ## While work runs
 

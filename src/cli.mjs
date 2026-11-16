@@ -30,6 +30,7 @@ const HELP = `oui — Oui Chef: give the order, get asked only what is yours to 
     oui tail <T> [-f]              a cook's activity
     oui log [-n 30]                who said what to whom
     oui wait                       block until something needs you
+                                   --new: only what you have not been told yet, each thing once (for keeping watch)
 
   Decide
     oui answer <A> ["<text>"]      answer a question (no text: asks you here)
@@ -70,7 +71,7 @@ const HELP = `oui — Oui Chef: give the order, get asked only what is yours to 
 // ---- arguments
 
 const MULTI = new Set(["option", "accept", "verify", "needs"]);
-const BOOL = new Set(["always", "yes", "follow", "f", "foreground", "open", "direct", "after", "json", "help", "h", "fast", "replace", "hold"]);
+const BOOL = new Set(["always", "yes", "follow", "f", "foreground", "open", "direct", "after", "json", "help", "h", "fast", "replace", "hold", "new"]);
 const ALIAS = { p: "project", n: "limit", y: "yes", ticket: "task" };
 
 function parse(argv) {
@@ -337,7 +338,28 @@ const commands = {
     for (const e of feed) say(`${new Date(e.ts).toTimeString().slice(0, 8)}  ${String(e.from).padEnd(11)} → ${String(e.to).padEnd(11)} ${e.text}`);
   },
 
-  async wait() {
+  async wait(args, flags) {
+    if (flags.new) {
+      // Keeping watch: only what the chef has not been told yet, and each thing once.
+      const parent = process.ppid;
+      await chefRpc("status");
+      let { rev } = await get("/api/board");
+      for (;;) {
+        const news = await rpc("news");
+        if (news.asks.length || news.goals.length) {
+          if (news.asks.length) say("NEW ON THE PASS");
+          news.asks.forEach((a, i) => {
+            if (i) say("");
+            printAsk(a);
+          });
+          if (news.goals.length) say(`${news.asks.length ? "\n" : ""}FINISHED`);
+          for (const g of news.goals) say(`  ${g.id} “${g.title}”  [${g.project}]  ${g.pr ? `pull request opened: ${g.pr}` : g.landed ? `landed on ${g.base}` : "complete, nothing to land"}`);
+          return say("\nYou are told each thing once; oui status shows all that is open. To keep watching: oui wait --new");
+        }
+        if (process.ppid !== parent) return; // whoever was waiting for this has gone
+        ({ rev } = await get(`/api/board?since=${rev}&wait=25`, 40000));
+      }
+    }
     await chefRpc("status");
     let board = await get("/api/board");
     const seen = new Set(board.asks.map((a) => a.id));

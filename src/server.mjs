@@ -19,6 +19,15 @@ export function methods(kitchen, expo) {
     board: [EVERYONE, board],
     status: [EVERYONE, () => ({ text: digest(board()) })],
     show: [EVERYONE, (p) => kitchen.show(p)],
+    // What is new for the chef, handed over once: for a conversation or a script that keeps watch on the pass.
+    news: [
+      CHEF,
+      () => {
+        const open = board().asks;
+        const fresh = kitchen.news();
+        return { asks: open.filter((a) => fresh.asks.includes(a.id)), goals: fresh.goals };
+      },
+    ],
     "project.add": [CHEF, (p) => kitchen.projectAdd(p)],
     "project.list": [EVERYONE, () => Object.values(kitchen.state.projects)],
     go: [CHEF, (p, who) => kitchen.go(p, who)],

@@ -401,6 +401,52 @@ test("a plan laid down held waits, is changed where it lies, and starts on the c
   assert.throws(() => kitchen.plan({ goalId: goal, hold: true, tickets: [ticket("late", "Late")] }, who), /a plan can be held only before it starts/);
 });
 
+test("a watch on the pass hands the chef each new thing once", async () => {
+  kitchen.news(); // whatever earlier tests left open is not news here
+  const watch = () => {
+    const w = { ended: false };
+    w.result = oui("wait", "--new").then((res) => ((w.ended = true), res));
+    return w;
+  };
+  const quiet = (ms) => new Promise((r) => setTimeout(r, ms));
+  const first = watch();
+  await quiet(700);
+  assert.equal(first.ended, false, "with nothing new, it waits");
+
+  // A cook's question reaches the pass: the watch ends with it, and only it.
+  const g = kitchen.plan({ goal: { title: "Watched", project: demo.repo }, tasks: [{ key: "picky", kind: "scout", title: "Pick one", brief: "x" }] }, who);
+  const told = await first.result;
+  const ask = askFor(g.tasks[0].id, "question");
+  assert.equal(told.code, 0, told.out);
+  assert.ok(told.out.startsWith(`NEW ON THE PASS\n${ask.id}  [question]  ${g.tasks[0].id} “Pick one”\n  ${ask.title}\n`), told.out);
+  assert.ok(told.out.includes(`  options: ${ask.options.map((o, i) => `${i + 1}) ${o}`).join("   ")}`), told.out);
+  assert.doesNotMatch(told.out, /FINISHED/);
+
+  // Still open, but the chef has been told: the next watch waits for something else.
+  const second = watch();
+  await quiet(700);
+  assert.equal(second.ended, false, "an ask is handed over once");
+  assert.ok(board().asks.some((a) => a.id === ask.id), "and it is still on the pass");
+
+  // The answer lets the cook finish, and a goal that finishes is news too.
+  kitchen.askAnswer({ id: ask.id, text: ask.options[0] }, who);
+  const finished = await second.result;
+  assert.match(finished.out, new RegExp(`^FINISHED\\n  ${g.goal} “Watched”  \\[\\S+\\]  complete, nothing to land`));
+  assert.deepEqual(kitchen.news(), { asks: [], goals: [] }, "and that is told once as well");
+
+  // A plan the chef laid down held is not news to them. One the sous chef wrote alone is.
+  const held = kitchen.plan({ hold: true, goal: { title: "Held by the chef", project: demo.repo }, tasks: [{ kind: "scout", title: "Later", brief: "x" }] }, who);
+  assert.deepEqual(kitchen.news().asks, []);
+  expo.goalSet({ id: held.goal, status: "cancelled" });
+  setRole("plan", PLANNER);
+  kitchen.config.calls.plan = true;
+  const alone = kitchen.go({ text: "Plan this one alone", plan: "ask" }, who);
+  const plan = await until("the sous chef's own plan to reach the pass", () => board().asks.find((a) => a.kind === "plan" && a.goal === alone.goal));
+  assert.deepEqual(kitchen.news().asks, [plan.id]);
+  expo.goalSet({ id: alone.goal, status: "cancelled" });
+  kitchen.config.calls.plan = false;
+});
+
 test("a sous chef who runs out of time, or writes no plan, asks the chef instead of guessing", async () => {
   setRole("plan", [{ sleep: 8000 }]);
   kitchen.config.calls.plan = { timeoutMinutes: 0.03 };

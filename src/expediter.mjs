@@ -684,7 +684,7 @@ export class Expediter {
     const project = kitchen.state.projects[goal.project];
     const ahead = goal.branch ? gitx.git(project.path, ["rev-list", "--count", `${project.base}..${goal.branch}`]).out : "0";
     if (!project.git || !goal.branch || ahead === "0") {
-      goal.status = "done";
+      Object.assign(goal, { status: "done", news: true }); // news: the chef is told once that it finished
       kitchen.emit({ type: "system", from: "expediter", to: "chef", goal: goal.id, text: `${goal.id} “${goal.title}” is complete` });
       return;
     }
@@ -769,7 +769,7 @@ export class Expediter {
       }
       const command = project.landing === "pr" ? `open pull request for ${goal.branch} → ${project.base}` : `land ${goal.branch} → ${project.base} in ${project.path}`;
       const action = kitchen.recordAction({ goal: goal.id, cwd: project.path, command, rule: "oui.land", about: "Land a finished goal", why: `${goal.id} ${goal.title}`, undo: [{ summary: project.landing === "pr" ? "Close the pull request and delete the pushed branch" : `Put ${project.base} back where it was`, steps: [res.undo], note: project.landing === "pr" ? undefined : "Only safe while nothing else has landed on top." }] });
-      Object.assign(goal, { status: "done", landedAt: now(), pr: res.url ?? null, landAsk: null, landAction: action.id });
+      Object.assign(goal, { status: "done", news: true, landedAt: now(), pr: res.url ?? null, landAsk: null, landAction: action.id });
       if (project.landing === "local") gitx.removeWorktree(project.path, gitx.goalWorktree(project, goal));
       kitchen.emit({ type: "system", from: "expediter", to: "chef", goal: goal.id, action: action.id, text: project.landing === "pr" ? `${goal.id} is up for review: ${res.url}` : `${goal.id} landed on ${project.base} (${action.id} undoes it)` });
       kitchen.changed();
