@@ -329,6 +329,7 @@ Not verified:
 - **Planning a goal in conversation.** Of `oui sous`, the watch on the pass was run with a real agent (above). Of talking a goal through, only the first reply was seen: the sous chef calling a held plan back to you, and changing it until you agree, has not been run with a real agent.
 - **A real inspector of your own, and a real plan sent back.** Both run in the tests with scripted agents only.
 - **A real cook working from a decision.** The tests show the answer in the cook's brief; no real cook has built on one yet. The `decide` ticket on the web board and in the Herdr panel was not looked at.
+- **The newest house rules.** They are words in the prompt files, and no real agent has been run on them: what looking, running or measuring would settle becomes a `scout` ticket or a trial at the cook's station, not a question for you; of several tickets that follow the same recipe, one goes through before the rest; a ticket nobody could check is cut again (`tickets.md`, `sous.md`, `cook.md`). The inspector sends work back only for what it can show, sends back a test loosened to pass, and reports a problem that was there before instead of charging it to the ticket (`roles.md`). A cook whose two tries have failed checks what both took for granted before stopping (`cook.md`). The tests cover only that every prompt still renders.
 - **Other agent CLIs.** Cooks are Claude Code. `src/harness/` is the one place to add another.
 
 ## Layout

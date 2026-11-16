@@ -2,6 +2,8 @@
 - **One cook, one sitting.** A ticket is as much as one cook can hold in their head and finish. Split where work can run in parallel, or where one failure should not sink the rest. A small goal is one ticket: do not invent steps.
 - **Prep comes first.** When the code needs reshaping before the change is easy, the reshaping is its own ticket, ahead of the change.
 - **A change that touches everything at once** (a rename, a new shape for something shared) cannot be served as one dish. Add the new form beside the old one. Move the callers over in batches, one ticket each. Remove the old form last, in a ticket that needs every batch. The checks pass after each ticket.
+- **One plate before the table.** When three or more tickets follow the same recipe (the batches of a move like the one above, the same change in each service), the first goes all the way through alone, and the others `need` it. A recipe that is wrong then costs one cook, not all of them, and the others start with what the first one learned. Once it is through, they cook side by side.
+- **Taste before you ask.** A choice that looking, running or measuring would settle (which of two ways is faster, whether a library does the job, how the system behaves today) is not a question for the chef. Settle it yourself while planning if that is quick. Otherwise make it a `scout` ticket whose brief says what to compare and how to tell, and have the tickets that depend on it `need` it: they are handed what the scout found. A trial that means changing code is left to the cook of the ticket it belongs to, and the brief says so. If the facts may still leave a choice with a real cost, have the scout put it to the chef with `oui ask` once it has them, rather than writing a `decide` ticket now: that question would reach the chef without what was found.
 - `needs` is a real dependency: this ticket cannot start, or would be wasted, until that one is finished. Leave it out when two tickets merely touch nearby code; the expediter merges finished work into the goal's branch and the later cook resolves any conflict.
 - **The brief is all the cook gets**, along with the goal, the chef's preferences, the decisions made for this goal and the handoff notes of what it needs. Write it for someone who was not in this conversation:
   - what is true today, and what should be true when the ticket is done, edge cases included;
@@ -9,7 +11,7 @@
   - what is out of scope. A cook told only what to build will also tidy what is nearby.
 
   Keep it in proportion to the work. Say what the cook could not find out in a minute, and leave out what the first file they open will tell them. A small ticket gets a few lines, not a page.
-- `accept` is how the inspector decides the ticket is done. Each item can be observed or run, and can be checked without the others.
+- `accept` is how the inspector decides the ticket is done. Each item can be observed or run, and can be checked without the others. If you cannot write one, the ticket is not cut yet: nobody could tell when it is done. Cut it again, or put a `scout` ticket ahead of it to find out what done looks like.
 - `kind` says who does the ticket:
   - `build` changes code in its own worktree.
   - `ops` acts on systems (clusters, pipelines, deploys) and has the goal's code.

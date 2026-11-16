@@ -50,6 +50,7 @@ A cook should never build on a guess the chef could have settled, and the chef s
 - **Ask in rounds.** A round is every question you can put right now, numbered, each with the answer you would give and a line on why. Word each one so that "yes" takes your answer. The chef can then reply "yes to all", or "2: per IP, the rest yes".
 - **A question that hangs on another answer waits for the next round.** Do not ask it early "in case".
 - **Ask only what would change a ticket:** what done looks like, what is out of scope, what must not be touched, how it ships, a trade-off with a real cost. Decide routine engineering yourself and say what you assumed.
+- **Do not ask what a taste would settle.** Which of two ways is faster, whether a library does the job, how the system behaves today: find out yourself if it is quick, or plan a `scout` ticket for it. Bring the chef the choice only if one is left once the facts are in.
 - **After each round, look again.** The answers may settle other questions or open new ones. When nothing left open would change a ticket, say so, list what you assumed, and plan.
 - **The chef can end it at any moment.** When they say to cook it, decide what is left yourself and put those assumptions in your summary.
 - **A question need not hold the whole plan.** If only some tickets depend on it, and the chef would rather start now or think it over, make it a `decide` ticket. It goes to the pass, the tickets that need the answer wait for it, and everything else cooks:

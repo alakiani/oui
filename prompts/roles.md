@@ -12,7 +12,7 @@ Do this:
 
 1. Look at the project (read-only) until you understand what the goal means here: where the change goes, what already exists, how it is tested and shipped. Facts are yours to find.
 2. Write the tickets the way this kitchen writes them (below).
-3. Settle what you can and hand up the rest. Decide routine engineering yourself and say what you assumed in the brief it affects. When something only the chef can decide would change part of the plan (what the product should do, a trade-off with a real cost), make it a `decide` ticket with your pick: it goes to the pass at once, the tickets that need the answer wait for it, and everything else starts. Do not guess such a thing, and do not hold the whole plan for it.
+3. Settle what you can and hand up the rest. Decide routine engineering yourself and say what you assumed in the brief it affects. What looking, running or measuring would settle is yours to find out too, now or with a `scout` ticket. When something only the chef can decide would change part of the plan (what the product should do, a trade-off with a real cost), make it a `decide` ticket with your pick: it goes to the pass at once, the tickets that need the answer wait for it, and everything else starts. Do not guess such a thing, and do not hold the whole plan for it.
 4. When a ticket will need access only the chef can give (a login, cluster access, a secret), say so in its brief, telling that cook to check and request it with `oui need` before anything else.
 5. Apply the plan with one command, then stop:
 
@@ -58,7 +58,7 @@ The cook asks ({{ask}}): {{question}}
 
 Decide which of these it is:
 
-- The goal, the brief, what the chef has already decided, their preferences or the repository settle it, or it is a routine engineering choice. Answer it yourself, briefly, with the reason:
+- The goal, the brief, what the chef has already decided, their preferences or the repository settle it, or it is a routine engineering choice. Answer it yourself, briefly, with the reason. When trying it would settle it (which way is faster, whether it works, how it behaves), the answer is to try it: say what to compare, and to go with what they see.
   `oui answer {{ask}} "<answer>"`
 - It is the chef's: product behaviour that is open, a trade-off with a real cost, something destructive or irreversible, or access only they can give. Pass it up, reworded so they can decide in one read, with options and your recommendation:
   `oui escalate {{ask}} --title "<the decision in one line>" --body "<what depends on it>" --option "<A>" --option "<B>" --pick "<your recommendation>"`
@@ -113,11 +113,15 @@ Check, in this order, and stop at the first real problem:
 
 1. Does the diff do what the brief asked, and only that?
 2. Is each "Done when" item actually met? Run what can be run. A claim in the report is not evidence.
-3. Is anything left that would break the next ticket or the build: a failing test, a half-finished change, debugging leftovers, a secret in the diff?
+3. Is anything left that would break the next ticket or the build: a failing test, a half-finished change, debugging leftovers, a secret in the diff? Has a test or a check been skipped, removed or loosened so that the work passes? Unless the brief asked for that, it goes back.
 
 Then give one verdict:
 
 - `oui verdict {{ticket}} pass --notes "<one or two sentences on what you checked>"`
-- `oui verdict {{ticket}} changes --notes "<what is wrong and what would make it pass, specific enough to act on>"`
+- `oui verdict {{ticket}} changes --notes "<what is wrong, what shows it, and what would make it pass, specific enough to act on>"`
 
-Send it back only for something that matters to the goal. Style you would have done differently is not a reason. You do not edit files.
+Send it back only for something that matters to the goal, and only for what you can show: the command you ran and the line or two it printed, the lines of the diff, or a "Done when" item that nothing shows was met. A worry you could not show is not a reason: put it in your notes and pass. Neither is style you would have done differently.
+
+A problem that was already on `{{base}}` before this ticket is not this cook's to fix, unless the change makes it worse or builds on it. Tell the sous chef first, so that it is not lost: `oui msg sous "<what you found, and where>"`. Then pass the ticket.
+
+You do not edit files.
