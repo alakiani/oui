@@ -32,6 +32,10 @@ test("what the board calls a ticket depends on its needs and its asks", () => {
   assert.equal(state("T6"), "with_sous");
   assert.equal(state("T8"), "stuck");
   assert.equal(displayState(byId.get("T3"), byId, asks, { status: "paused" }), "paused");
+  // A land step holds for the checks on everything finished so far, and only then for the chef.
+  const land = T("T9", [], "blocked", { kind: "land" });
+  assert.equal(displayState(land, byId, asks, goal), "review");
+  assert.equal(displayState(land, byId, [...asks, { task: "T9", to: "chef", status: "open" }], goal), "needs_you");
 });
 
 test("ready tickets start in order: priority, then whatever unblocks the most, then the oldest", () => {

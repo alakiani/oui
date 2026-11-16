@@ -89,6 +89,7 @@ export function displayState(task, byId, openAsks, goal) {
   }
   if (task.status === "blocked") {
     const mine = openAsks.filter((a) => a.task === task.id);
+    if (task.kind === "land" && !mine.length) return "review"; // the checks run on everything finished so far, before the chef is asked
     return mine.some((a) => a.to === "chef") ? "needs_you" : "with_sous";
   }
   return task.status; // running | review | done | failed | paused | cancelled

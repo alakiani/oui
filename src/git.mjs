@@ -36,6 +36,16 @@ export function removeWorktree(repo, dir) {
 
 export const goalWorktree = (project, goal) => path.join(P.worktrees(), project.id, goal.id);
 
+// The tree a commit holds: two commits with the same tree have exactly the same files.
+export const treeOf = (repo, rev) => git(repo, ["rev-parse", `${rev}^{tree}`]).out;
+
+// A throwaway checkout of one commit, for running something against it without disturbing any branch's worktree.
+export function scratchWorktree(repo, dir, rev) {
+  removeWorktree(repo, dir);
+  ensureDir(path.dirname(dir));
+  return git(repo, ["worktree", "add", "--detach", dir, rev]);
+}
+
 // Merge a finished ticket into its goal branch. On a conflict nothing is left
 // half-merged: the cook that owns the ticket branch is asked to resolve it.
 export function integrate(project, goal, task) {

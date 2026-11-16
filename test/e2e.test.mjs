@@ -46,6 +46,11 @@ script.roles["message:shrugger"] = [];
 // The sous chef planning a goal by itself: two tickets, and a note for the chef.
 const PLANNER = [{ run: `oui plan - <<'EOF'\n{ "goalId": "{goal}", "goal": { "title": "Two steps", "note": "Cut in two. Assumed nothing else changes." }, "tickets": [ { "key": "first", "kind": "scout", "title": "First step", "brief": "x" }, { "key": "second", "kind": "scout", "title": "Second step", "brief": "x", "needs": ["first"] } ] }\nEOF` }];
 
+// Two cooks whose work passes the project's check alone and fails it together, and the one sent to put that right.
+script.tasks.left = [{ write: "left.txt", content: "left\n" }, { run: 'git add -A && git commit -qm "Add the left half"' }, { run: 'oui done --summary "Added the left half."' }];
+script.tasks.right = [{ write: "right.txt", content: "right\n" }, { run: 'git add -A && git commit -qm "Add the right half"' }, { run: 'oui done --summary "Added the right half."' }];
+script.tasks.mend = [{ run: "test -f left.txt && test -f right.txt", must: true }, { run: 'git mv right.txt right-half.txt && git commit -qm "Rename the right half so both can stay"' }, { run: 'oui done --summary "Renamed the right half; both halves now pass together."' }];
+
 script.tasks.feature = [{ write: "feature.txt", content: "new\n" }, { run: 'git add -A && git commit -qm "Add the feature"' }, { run: 'oui done --summary "Added the feature."' }];
 script.tasks.deploy = [{ run: "git -C {repo} log --format=%s main | grep -q 'Add the feature'", must: true }, { run: "test -f feature.txt", must: true }, { run: 'oui done --summary "Deployed from main."' }];
 
@@ -244,6 +249,58 @@ test("a land step mid-plan puts the work on the base branch before what follows"
   assert.ok(!git("log", "--format=%s", "main").includes("Add the feature"), "main is back where it was");
   assert.match(fs.readFileSync(mine, "utf8"), /halfway through something/, "the chef's edit survived");
   fs.writeFileSync(mine, before);
+});
+
+test("work that passed alone is checked together before it lands, and a cook is sent when it fails", async () => {
+  // The check fails only when both halves are present. Each run leaves a line behind, so the runs can be counted.
+  const runs = path.join(dir, "check-runs.txt");
+  const count = () => (fs.existsSync(runs) ? fs.readFileSync(runs, "utf8").split("\n").filter(Boolean).length : 0);
+  const check = `echo run >> "${runs}"; ! { test -f left.txt && test -f right.txt; }`;
+  kitchen.projectAdd({ path: demo.repo, landing: "local", merge: "ask", verify: [check], replace: true });
+
+  const g = kitchen.plan({ goal: { title: "Two halves", project: demo.repo }, tasks: [{ key: "left", title: "Left half", brief: "x" }, { key: "right", title: "Right half", brief: "x" }] }, who);
+  const goal = kitchen.state.goals[g.goal];
+  const mend = await until("a ticket to put the combined work right", () => ticketsOf(g.goal).find((t) => t.key === "mend"));
+  assert.deepEqual(g.tasks.map((t) => kitchen.state.tasks[t.id].status), ["done", "done"], "each half passed alone and merged");
+  assert.equal(mend.by, "expediter");
+  assert.match(mend.brief, /Merged together on `oui\/G\d+-two-halves`, they do not:\n\n {4}\$ echo run/);
+  assert.ok(!board().asks.some((a) => a.kind === "land" && a.goal === g.goal), "nothing is offered for landing while the checks fail");
+  assert.ok(kitchen.feed.some((e) => e.goal === g.goal && e.text.includes(`${mend.id} will put it right before anything lands`)));
+
+  // The cook sent in fixes it. Its own pass through the checks is the proof for the whole goal: they are not run again.
+  const land = await until("the landing to be offered", () => board().asks.find((a) => a.kind === "land" && a.goal === g.goal));
+  assert.equal(kitchen.state.tasks[mend.id].status, "done");
+  assert.equal(count(), 4, "left, right, the two together, and the fix: no run after that");
+  assert.equal(goal.checking, false);
+  kitchen.askApprove({ id: land.id }, who);
+  await until("the goal to land", () => goal.status === "done");
+  const halves = () => git("ls-tree", "-r", "--name-only", "main").split("\n").filter((f) => /left|right/.test(f));
+  const unland = (id) => assert.ok(kitchen.undo({ id: kitchen.actions({}).find((a) => a.rule === "oui.land" && a.goal === id).id, run: true }).ok);
+  assert.deepEqual(halves(), ["left.txt", "right-half.txt"]);
+  unland(g.goal);
+  assert.deepEqual(halves(), []);
+
+  // A land step in the middle of a plan is held the same way: it waits for the fix, and only then asks.
+  const mid = kitchen.plan({ goal: { title: "Halves, landed mid-plan", project: demo.repo }, tasks: [{ key: "left", title: "Left half", brief: "x" }, { key: "right", title: "Right half", brief: "x" }, { key: "land", kind: "land", title: "Land the halves", needs: ["left", "right"] }] }, who);
+  const step = mid.tasks[2].id;
+  const fix = await until("a ticket to put the work right before the land step", () => ticketsOf(mid.goal).find((t) => t.key === "mend"));
+  assert.ok(kitchen.state.tasks[step].needs.includes(fix.id), "the land step now waits for the fix");
+  assert.ok(!askFor(step, "land"), "and has not asked the chef to land what fails");
+  const midAsk = await until("the land step to ask", () => askFor(step, "land"));
+  assert.equal(kitchen.state.tasks[fix.id].status, "done");
+  assert.equal(count(), 8, "four more runs, and none after the fix");
+  kitchen.askApprove({ id: midAsk.id }, who);
+  await until("the second goal to close", () => kitchen.state.goals[mid.goal].status === "done");
+  assert.deepEqual(halves(), ["left.txt", "right-half.txt"]);
+  unland(mid.goal);
+
+  // Work that is exactly what one ticket was checked on is not checked twice.
+  const before = count();
+  const single = kitchen.plan({ goal: { title: "One step", project: demo.repo }, tasks: [{ key: "feature", title: "Add the feature", brief: "x" }] }, who);
+  const offer = await until("the single ticket's landing to be offered", () => board().asks.find((a) => a.kind === "land" && a.goal === single.goal));
+  assert.equal(count(), before + 1);
+  expo.goalSet({ id: single.goal, status: "cancelled" });
+  kitchen.projectAdd({ path: demo.repo, landing: "local", verify: [], replace: true });
 });
 
 test("a question in the plan reaches the pass at once and holds only the tickets that need its answer", async () => {

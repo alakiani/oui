@@ -91,8 +91,14 @@ export class Kitchen {
         t.status = "blocked";
         t.inbox = [...(t.inbox ?? []), { kind: "system", text: "Oui Chef restarted while you were working. Check where you left off (git status, your last notes) and carry on." }];
       } else if (t.status === "review") t.reviewStage = null;
+      // A land step that was waiting for the checks on the goal's work, not for the chef: it starts over.
+      else if (t.kind === "land" && t.status === "blocked" && !this.openAsks(t.id).length) Object.assign(t, { status: "todo", reviewStage: null });
     }
-    for (const g of Object.values(this.state.goals)) if (g.status === "planning") g.planTried = false;
+    for (const g of Object.values(this.state.goals)) {
+      if (g.status === "planning") g.planTried = false;
+      // The checks on a finished goal's work were cut short: it is looked at again, and they run again.
+      if (g.checking) Object.assign(g, { checking: false, completedAt: null });
+    }
   }
 
   save() {

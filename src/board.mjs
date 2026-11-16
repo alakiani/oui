@@ -44,6 +44,7 @@ export function buildBoard(kitchen, running = new Map()) {
       branch: g.branch ?? null,
       pr: g.pr ?? null,
       landed: g.landedAt ?? null,
+      checking: Boolean(g.checking), // the project's checks are running on everything it has finished
       createdAt: g.createdAt,
       rank: Object.fromEntries(rank),
     };
@@ -142,7 +143,7 @@ export function digest(board) {
     for (const a of board.asks) out.push(`  ${a.id} [${a.kind}] ${a.task ?? a.goal ?? ""} ${a.title}${a.holds > 1 ? `  (holds up ${a.holds} tickets)` : ""}${a.command ? `\n      $ ${clip(a.command, 200)}` : ""}${a.options?.length ? `\n      options: ${a.options.join(" | ")}${a.pick ? `   (asker would pick: ${a.pick})` : ""}` : ""}`);
   }
   for (const g of board.goals.filter((x) => x.status !== "done" && x.status !== "cancelled")) {
-    out.push("", `${g.id} ${g.title}  [${g.project}] ${g.done}/${g.total}${g.status !== "active" ? `  (${{ proposed: "the plan is waiting for your go", unplanned: "no plan yet: needs you" }[g.status] ?? g.status})` : ""}`);
+    out.push("", `${g.id} ${g.title}  [${g.project}] ${g.done}/${g.total}${g.status !== "active" ? `  (${{ proposed: "the plan is waiting for your go", unplanned: "no plan yet: needs you" }[g.status] ?? g.status})` : g.checking ? "  (checking the finished work together)" : ""}`);
     const mine = board.tasks.filter((t) => t.goal === g.id).sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id, undefined, { numeric: true }));
     for (const t of mine) out.push(`  ${t.id.padEnd(4)} ${({ needs_you: "at the pass", with_sous: "with sous" }[t.state] ?? t.state).padEnd(11)} ${clip(t.title, 60)}${t.state === "done" ? "" : ` — ${clip(t.line, 90)}`}`);
   }

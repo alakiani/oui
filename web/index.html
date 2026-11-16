@@ -418,7 +418,7 @@ function renderGoal(g, tasks) {
     cards[t.id] = card;
     lane.append(card);
   }
-  const label = g.status === "planning" ? "sous chef is planning" : g.status === "proposed" ? "plan waiting for your go" : g.status === "unplanned" ? "no plan yet · needs you" : g.status === "done" ? (g.pr ? "in a pull request" : g.landed ? "landed" : "complete") : g.status === "active" && g.total && g.done === g.total ? "finished · waiting to land" : g.status;
+  const label = g.status === "planning" ? "sous chef is planning" : g.status === "proposed" ? "plan waiting for your go" : g.status === "unplanned" ? "no plan yet · needs you" : g.status === "done" ? (g.pr ? "in a pull request" : g.landed ? "landed" : "complete") : g.checking ? "checking the finished work" : g.status === "active" && g.total && g.done === g.total ? "finished · waiting to land" : g.status;
   return h(
     "section", { class: "goal" },
     h("header", {},

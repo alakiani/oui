@@ -69,7 +69,7 @@ oui project add ~/code/my-repo --landing local --verify "npm test"
 ```
 
 - `--landing local` means nothing is pushed anywhere. Finished work reaches your base branch only when you approve the landing, as a local fast-forward.
-- `--verify` is a command every ticket must pass before it counts as done. Leave it out if you have none.
+- `--verify` is a command every ticket must pass before it counts as done. Leave it out if you have none. It also runs on a goal's finished work as a whole before that is offered for landing, when tickets ran side by side.
 - The base branch is whichever branch is checked out when you add the project.
 
 Cooks never work in your checkout. Each gets its own git worktree under `~/.ouichef/worktrees`, so you can keep working in the repository meanwhile.

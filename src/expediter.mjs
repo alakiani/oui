@@ -51,6 +51,7 @@ export class Expediter {
     this.roles = new Map(); // "kind:subject" -> promise
     this.reviewing = new Set();
     this.landing = new Set();
+    this.proving = new Map(); // goal id -> the check of its finished work that is under way
     this.backend = resolveSessions(kitchen.config.sessions); // null: cooks run headless under this daemon
     this.launches = new Map(); // ticket -> what its terminal should run, handed over once
     kitchen.expo = this;
@@ -599,6 +600,8 @@ export class Expediter {
         if (task.status !== "review") return;
         if (!res.ok) return this.#sendBack(task, `A required check failed: \`${cmd}\`\n\n${clip(res.out.slice(-1800), 1800)}\n\nFix it, then run oui done again.`);
       }
+      // Remembered, so the goal's work is not checked again when it is exactly what passed here.
+      if (isBuild && project.verify?.length) task.checked = { tree: gitx.treeOf(task.workdir, "HEAD"), checks: [...project.verify] };
       // Each inspector reads the work alone, so one cannot talk another out of what it saw.
       const names = reviewed ? inspectors().filter((name) => callSettings(kitchen.config, name ? `review: ${name}` : "review").on) : [];
       if (names.length) {
@@ -688,6 +691,22 @@ export class Expediter {
       kitchen.emit({ type: "system", from: "expediter", to: "chef", goal: goal.id, text: `${goal.id} “${goal.title}” is complete` });
       return;
     }
+    // Nothing is offered for landing until the finished work has passed the project's checks as a whole.
+    this.#proved(goal).then((res) => {
+      if (goal.status !== "active" || !goal.completedAt) return void (goal.completedAt = null); // stopped or added to meanwhile: looked at again when it is finished and active
+      if (res.stale) {
+        goal.completedAt = null;
+        return this.kick();
+      }
+      if (!res.ok) return; // a ticket was added to put it right, so the goal is not finished after all
+      this.#offerLanding(goal, Object.values(kitchen.state.tasks).filter((t) => t.goal === goal.id && t.status === "done"));
+      kitchen.changed();
+    });
+  }
+
+  #offerLanding(goal, tasks) {
+    const { kitchen } = this;
+    const project = kitchen.state.projects[goal.project];
     if (project.merge === "auto") return void this.land(goal);
     if (goal.landDeferred) return;
     const how = project.landing === "pr" ? `Push \`${goal.branch}\` and open one pull request against \`${project.base}\`` : `Fast-forward \`${project.base}\` in ${project.path} to \`${goal.branch}\``;
@@ -733,10 +752,97 @@ export class Expediter {
       Object.assign(task, { status: "done", finishedAt: now(), report: { summary: `Nothing new to land on ${project.base ?? "the base branch"}.`, handoff: "", evidence: "", at: now() } });
       return;
     }
-    if (project.merge === "auto") return this.#landNow(task);
-    task.status = "blocked";
-    const how = project.landing === "pr" ? `Push \`${goal.branch}\` and open a pull request against \`${project.base}\`` : `Fast-forward \`${project.base}\` in ${project.path} to \`${goal.branch}\``;
-    kitchen.askCreate({ kind: "land", task: task.id, goal: goal.id, from: "expediter", to: "chef", title: `${task.title}: land ${goal.id} so far?`, body: `${how} (${gitx.diffStat(project.path, project.base, goal.branch) || "no diff"}). The tickets after this one wait for it.`, undo: [{ summary: project.landing === "pr" ? "Close the pull request and delete the pushed branch" : `Put ${project.base} back on the commit it is on now`, steps: [] }] }, { role: "expediter" });
+    // It waits here: first for the checks on everything finished so far, then for the chef.
+    Object.assign(task, { status: "blocked", reviewStage: "verify" });
+    this.#proved(goal).then((res) => {
+      if (task.status !== "blocked") return; // cancelled or paused meanwhile
+      task.reviewStage = null;
+      if (!res.ok) {
+        // Not as it stands: after the ticket that puts it right, or again now that the goal has moved on.
+        if (res.mend) task.needs = [...new Set([...task.needs, res.mend])];
+        task.status = "todo";
+        return kitchen.changed();
+      }
+      if (project.merge === "auto") return this.#landNow(task);
+      const how = project.landing === "pr" ? `Push \`${goal.branch}\` and open a pull request against \`${project.base}\`` : `Fast-forward \`${project.base}\` in ${project.path} to \`${goal.branch}\``;
+      kitchen.askCreate({ kind: "land", task: task.id, goal: goal.id, from: "expediter", to: "chef", title: `${task.title}: land ${goal.id} so far?`, body: `${how} (${gitx.diffStat(project.path, project.base, goal.branch) || "no diff"}). The tickets after this one wait for it.`, undo: [{ summary: project.landing === "pr" ? "Close the pull request and delete the pushed branch" : `Put ${project.base} back on the commit it is on now`, steps: [] }] }, { role: "expediter" });
+      kitchen.changed();
+    });
+  }
+
+  // Each ticket passed the project's checks on its own branch, but tickets that ran side by side were never
+  // checked together. So before a goal's work lands, the checks run once more on the goal's branch, in a
+  // checkout of their own, unless that exact tree has already passed them. If they fail, nothing lands and
+  // a cook is sent to put it right.
+  // -> { ok } when the work may land, { mend } the ticket that will put it right, or { stale } when the goal moved on meanwhile.
+  #proved(goal) {
+    if (this.proving.has(goal.id)) return this.proving.get(goal.id);
+    const run = this.#prove(goal)
+      .catch((e) => {
+        // The check itself broke. Say so, and leave the decision with the chef at the landing rather than holding the goal for ever.
+        goal.checking = false;
+        this.kitchen.emit({ type: "system", from: "expediter", to: "chef", goal: goal.id, text: `${goal.id}: the finished work could not be checked together: ${clip(e.message, 200)}` });
+        return { ok: true };
+      })
+      .finally(() => this.proving.delete(goal.id));
+    this.proving.set(goal.id, run);
+    return run;
+  }
+
+  async #prove(goal) {
+    const { kitchen } = this;
+    const project = kitchen.state.projects[goal.project];
+    const checks = project.verify ?? [];
+    if (!checks.length || !project.git || !goal.branch) return { ok: true };
+    const tip = gitx.git(project.path, ["rev-parse", goal.branch]).out;
+    const tree = gitx.treeOf(project.path, tip);
+    const covers = (c) => c?.tree === tree && checks.every((cmd) => c.checks.includes(cmd));
+    const done = Object.values(kitchen.state.tasks).filter((t) => t.goal === goal.id && t.status === "done");
+    if (covers(goal.checked) || done.some((t) => covers(t.checked))) return { ok: true };
+
+    const dir = path.join(P.worktrees(), project.id, `${goal.id}-check`);
+    const wt = gitx.scratchWorktree(project.path, dir, tip);
+    if (!wt.ok) return { ok: true }; // no checkout to check in: landing itself will say what is wrong with the repository
+    goal.checking = true;
+    kitchen.emit({ type: "system", from: "expediter", to: "board", goal: goal.id, text: `${goal.id}: checking the finished work together (${checks.join("; ")})` });
+    kitchen.changed();
+    // Run as the cook of a finished ticket, never as the chef: a check is code from the branch.
+    const env = this.agentEnv("cook", done.findLast((t) => !NO_COOK.has(t.kind))?.id ?? "none");
+    let failed = null;
+    try {
+      for (const cmd of checks) {
+        const res = await shell(cmd, dir, env, 30 * 60000);
+        if (!res.ok) failed = { cmd, out: res.out };
+        if (failed) break;
+      }
+    } finally {
+      gitx.removeWorktree(project.path, dir);
+      goal.checking = false;
+    }
+    if (!failed) goal.checked = { tree, checks: [...checks] };
+    if (gitx.git(project.path, ["rev-parse", goal.branch]).out !== tip) {
+      kitchen.changed();
+      return { stale: true }; // more was merged while the checks ran; they say nothing about the goal as it is now
+    }
+    if (!failed) {
+      kitchen.emit({ type: "system", from: "expediter", to: "board", goal: goal.id, text: `${goal.id}: the finished work passes the checks` });
+      kitchen.changed();
+      return { ok: true };
+    }
+    const mend = kitchen.taskAdd(
+      {
+        goal: goal.id,
+        key: "mend",
+        kind: "build",
+        title: `Make ${goal.id}'s finished work pass the checks`,
+        brief: `Every ticket in this goal passed the project's checks on its own branch. Merged together on \`${goal.branch}\`, they do not:\n\n    $ ${failed.cmd}\n${clip(failed.out.slice(-1800), 1800).split("\n").map((l) => `    ${l}`).join("\n")}\n\nYour branch starts from that merged work. Find what in the combination breaks the check and fix it, keeping what each ticket set out to do. Do not redo their work or widen the change.\n\nThe check was run in a bare checkout of the branch. If it passes at your station with nothing changed, the failure came from that checkout (dependencies that were not installed, for example): change nothing, report done and say so.`,
+        accept: [`\`${failed.cmd}\` passes on everything this goal has finished`],
+      },
+      { role: "expediter" },
+    );
+    kitchen.emit({ type: "system", from: "expediter", to: "chef", goal: goal.id, task: mend.id, text: `${goal.id}: the finished work fails \`${clip(failed.cmd, 120)}\` together; ${mend.id} will put it right before anything lands` });
+    kitchen.changed();
+    return { mend: mend.id };
   }
 
   #landNow(task) {
